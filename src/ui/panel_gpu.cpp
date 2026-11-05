@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 // The panel's Direct3D 12 renderer: one recorded list per backend render call, the
 // ImGui backend, the descriptor heaps, and the fence a reused list must wait on.
 #include "panel_impl.hpp"

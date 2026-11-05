@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 #include "command_guard.hpp"
 #include "capture12.hpp"
 #include "../detour_hook.hpp"
@@ -635,7 +634,10 @@ struct Indirect
         {
             return;
         }
-        IndirectInfo info{};
+        // Reused per thread: the struct carries up to 64 argument changes, and a
+        // fresh zeroed copy on every ExecuteIndirect costs more than the query.
+        // `bytes == sizeof(info)` proves the buffer was actually written.
+        static thread_local IndirectInfo info;
         UINT bytes = sizeof(info);
         const bool known = signature && SUCCEEDED(signature->GetPrivateData(IndirectInfoId, &bytes, &info)) && bytes == sizeof(info) && info.valid;
         Track(l, [&](State& s)

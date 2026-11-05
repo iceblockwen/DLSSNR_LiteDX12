@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 // Alternative entry point, used when the game's dxgi.dll belongs to another
 // mod: forward one system DLL's exports unchanged (names, indices and ordinals
 // come from src/proxy/<name>.def through the generated header and stubs) and

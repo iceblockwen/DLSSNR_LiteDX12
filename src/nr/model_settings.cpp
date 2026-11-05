@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 #include "model_settings.hpp"
 #include "model_runtime.hpp"
 #include "status.hpp"

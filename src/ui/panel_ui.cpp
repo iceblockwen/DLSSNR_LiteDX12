@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 // The panel's ImGui window: the three tabs and the resource previews.
 #include "panel_impl.hpp"
 #include "ui_widgets.hpp"
@@ -169,20 +168,15 @@ void Panel::Impl::BuildPipelineStatus(const nr::ModelSettings& settings, const n
         ImGui::TextDisabled("NR inputs: no recent input received");
         return;
     }
-    const char* origin = pass.inputOrigin == nr::InputOrigin::GameDlss
-                             ? "game post-DLSS output"
-                             : "unidentified source";
-    ImGui::TextWrapped("Last NR color: %s%s", origin,
+    // Every NR input is the game's own post-DLSS evaluate.
+    ImGui::TextWrapped("Last NR color: game post-DLSS output%s",
                        pass.sceneLinear ? " + white normalization / encoding"
                                         : " (display domain; non-HDR bypass: no exposure/encoding)");
-    ImGui::TextWrapped("Depth: %s%s%s",
-                       pass.inputOrigin == nr::InputOrigin::GameDlss ? "game native"
-                                                                     : "captured / supplied",
+    ImGui::TextWrapped("Depth: game native%s%s",
                        pass.inputConverted[1] ? " + format conversion" : "",
                        pass.depthFlipped ? " + vertical flip" : "");
     ImGui::PushStyleColor(ImGuiCol_Text, green);
-    ImGui::TextWrapped("MV: %s%s | scale %.5g, %.5g",
-                       pass.inputOrigin == nr::InputOrigin::GameDlss ? "game native" : "supplied",
+    ImGui::TextWrapped("MV: game native%s | scale %.5g, %.5g",
                        pass.inputConverted[2] ? " + format conversion" : "",
                        double(pass.motionScaleX), double(pass.motionScaleY));
     ImGui::PopStyleColor();

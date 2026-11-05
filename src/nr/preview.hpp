@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 // Guide previews (colour / depth / motion). Independent of NGX and the panel;
 // descriptors and output belong to one GPU recording.
 #pragma once

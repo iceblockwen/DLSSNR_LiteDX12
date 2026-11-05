@@ -1,9 +1,8 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 #include "pass.hpp"
+#include "gpu_util.hpp"
 #include "lite_color_shader.hpp"
 #include "model_runtime.hpp"
 #include "../graphics.hpp"
-#include <cstdio>
 #include <mutex>
 #include <algorithm>
 #include <cmath>
@@ -20,7 +19,6 @@ bool Plain(const D3D12_RESOURCE_DESC& d)
     return d.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D && d.DepthOrArraySize == 1 &&
            d.MipLevels == 1 && d.SampleDesc.Count == 1 && d.Width && d.Height;
 }
-// QueryPerformance calls never appear in the steady-state path.
 // Settings arrive validated by SetModelSettings; only game-provided values are bounded here.
 void Tuning(ModelRuntime::Batch& backend, const PassSettings& s)
 {
@@ -33,17 +31,22 @@ void Tuning(ModelRuntime::Batch& backend, const PassSettings& s)
     backend.SetUnsigned("DLSSNR.UseAutoMask", s.autoMask ? 1u : 0u);
     backend.SetUnsigned("DLSSNR.UICorrection", s.uiCorrection ? 1u : 0u);
 }
-void Region(ModelRuntime::Batch& backend, const char* prefix, unsigned w, unsigned h, unsigned x = 0,
+using RegionKeys = const char* const[4];
+constexpr RegionKeys colorRegion{"DLSSNR.ColorSubrectBaseX", "DLSSNR.ColorSubrectBaseY",
+                                 "DLSSNR.ColorSubrectWidth", "DLSSNR.ColorSubrectHeight"};
+constexpr RegionKeys outputRegion{"DLSSNR.OutputSubrectBaseX", "DLSSNR.OutputSubrectBaseY",
+                                  "DLSSNR.OutputSubrectWidth", "DLSSNR.OutputSubrectHeight"};
+constexpr RegionKeys depthRegion{"DLSSNR.DepthSubrectBaseX", "DLSSNR.DepthSubrectBaseY",
+                                 "DLSSNR.DepthSubrectWidth", "DLSSNR.DepthSubrectHeight"};
+constexpr RegionKeys motionRegion{"DLSSNR.MVecSubrectBaseX", "DLSSNR.MVecSubrectBaseY",
+                                  "DLSSNR.MVecSubrectWidth", "DLSSNR.MVecSubrectHeight"};
+void Region(ModelRuntime::Batch& backend, const RegionKeys& keys, unsigned w, unsigned h, unsigned x = 0,
             unsigned y = 0)
 {
-    // Runs for every recording: build the keys on the stack, never on the heap.
-    constexpr const char* suffix[]{"SubrectBaseX", "SubrectBaseY", "SubrectWidth", "SubrectHeight"};
     const unsigned value[]{x, y, w, h};
     for (unsigned n = 0; n < 4; ++n)
     {
-        char key[64]{};
-        snprintf(key, sizeof(key), "DLSSNR.%s%s", prefix, suffix[n]);
-        backend.SetUnsigned(key, value[n]);
+        backend.SetUnsigned(keys[n], value[n]);
     }
 }
 ComPtr<ID3D12Resource> Texture(ID3D12Device* d, unsigned w, unsigned h, DXGI_FORMAT f)
@@ -88,6 +91,11 @@ void ParkFeature(void* feature, ModelRuntime* backend, const std::shared_ptr<Gpu
 }
 void DrainParkedFeatures()
 {
+    // Called on every retirement pass; nothing parked is the steady state.
+    if (!parkedCount.load())
+    {
+        return;
+    }
     std::vector<ParkedFeature> released;
     {
         std::lock_guard lock(parkedMutex);
@@ -279,7 +287,6 @@ struct PassExecutor12::Impl
     std::shared_ptr<Recording> previous;
     std::vector<std::shared_ptr<Recording>> inFlight;
     std::vector<std::shared_ptr<TimingResources>> timingPool;
-    mutable std::mutex mutex;
     PassStatus status;
     UINT64 tick{}, frameIndex{};
     UINT64 whiteEpoch{};
@@ -290,7 +297,6 @@ struct PassExecutor12::Impl
     unsigned guideWidth[2]{}, guideHeight[2]{};
     Guides previousGuides;
     bool haveGuides{};
-    // timing summary accumulators. Nothing here runs below Verbose.
     explicit Impl(ID3D12Device* d, ModelRuntime& b)
         : device(d), backend(b)
     {
@@ -332,7 +338,6 @@ struct PassExecutor12::Impl
                    std::shared_ptr<void>& keep, ID3D12Resource*& result)
     {
         result = frame.resources[0].Get();
-        DrainParkedFeatures();
         status.edited = false;
         status.actualPasses = 0;
         status.frameSkipped = false;
@@ -458,20 +463,15 @@ struct PassExecutor12::Impl
             }
         }
         status.hasInput = true;
-        status.inputOrigin = frame.origin;
         status.inputTime = GetTickCount64();
         status.depthFlipped = frame.guides.flipDepth;
         status.motionScaleX = frame.guides.motionScaleX;
         status.motionScaleY = frame.guides.motionScaleY;
-        for (unsigned n = 0; n < 3; ++n)
-        {
-            status.inputConverted[n] = frame.converted[n];
-        }
         // These are the adapters required by this input. A skipped frame's
         // state/reason remains visible separately; it is not a successful run.
-        status.inputConverted[1] |=
+        status.inputConverted[1] =
             frame.resourceMetadata[1].description.Format != DXGI_FORMAT_R32_FLOAT;
-        status.inputConverted[2] |=
+        status.inputConverted[2] =
             frame.resourceMetadata[2].description.Format != DXGI_FORMAT_R16G16_FLOAT;
         status.sceneLinear = exposure.sceneLinear;
         status.preExposure = exposure.pre;
@@ -481,7 +481,7 @@ struct PassExecutor12::Impl
         auto canFollow = [&]
         {
             if (!(previous->evaluated || previous->createdFeature) ||
-                !(frame.submissionDependencies && previous->input.ticket->CanOrderSubmission()) ||
+                !previous->input.ticket->CanOrderSubmission() ||
                 !context || context->failed)
             {
                 return false;
@@ -530,7 +530,6 @@ struct PassExecutor12::Impl
             // handle instead of releasing it, so this rebuild must not wait for the previous
             // recording's fence. The ticket still orders this rebuild after the old work.
             const bool tuningRebuild = context && !SameTuning(context->tuning, settings) &&
-                                       frame.submissionDependencies &&
                                        previous->input.ticket->CanOrderSubmission();
             if (!previous->input.ticket->Complete() && !canFollow() && !tuningRebuild)
             {
@@ -545,7 +544,7 @@ struct PassExecutor12::Impl
                 status.reason = "Waiting for NR creation, rebuild or unknown-queue recording";
                 return S_FALSE;
             }
-            if (!previous->input.ticket->Complete() && frame.submissionDependencies &&
+            if (!previous->input.ticket->Complete() &&
                 !frame.ticket->DependOn(previous->input.ticket))
             {
                 return refuse(E_ABORT,
@@ -961,6 +960,10 @@ struct PassExecutor12::Impl
             list->Dispatch((constants.w + 7) / 8, (constants.h + 7) / 8, 1);
         };
         ID3D12Resource* guides[2]{frame.resources[1].Get(), frame.resources[2].Get()};
+        // Transitions that only have to be visible before the next dependent command
+        // are collected here: one guide's conversion end merges with the next one's
+        // conversion start, and the last one with the proxy restore below.
+        BarrierBatch12 pending(list);
         for (unsigned n = 0; n < 2; ++n)
         {
             auto d = resourceDescription(guides[n]);
@@ -980,8 +983,11 @@ struct PassExecutor12::Impl
             }
             else
             {
-                Transition(list, twin.Get(), SRV, UAV);
+                pending.Add(twin.Get(), SRV, UAV);
             }
+            // The dispatch below writes the twin, so everything pending must land first:
+            // a new texture is already created in UAV, so this is a no-op for it.
+            pending.Flush();
             const unsigned table = 12 + 6 * n;
             srv(table, guides[n], n == 0);
             for (unsigned j = 1; j < 4; ++j)
@@ -1003,7 +1009,7 @@ struct PassExecutor12::Impl
             guideConstants.guideH =
                 frame.guides.height[n + 1] ? frame.guides.height[n + 1] : d.Height;
             run(table, guideConstants);
-            Transition(list, twin.Get(), UAV, SRV);
+            pending.Add(twin.Get(), UAV, SRV);
             guides[n] = twin.Get();
             recording->modelGuides[n] = twin;
         }
@@ -1042,11 +1048,14 @@ struct PassExecutor12::Impl
             }
         }
         run(0, c);
-        Transition(list, ctx->proxy.Get(), UAV, SRV);
+        // One barrier call covers the guide conversions finishing and the proxy
+        // becoming readable for the model.
+        pending.Add(ctx->proxy.Get(), UAV, SRV);
+        pending.Flush();
         // One feature evaluates the immutable encoded input exactly once.
-        bool readable{};
         bool evaluatedOk{};
         ID3D12Resource* input = ctx->proxy.Get();
+        // Non-null once the model produced an answer; the tail barrier keys off it.
         ID3D12Resource* final{};
         if (status.readyPasses)
         {
@@ -1066,12 +1075,12 @@ struct PassExecutor12::Impl
                 params.SetUnsigned("DLSSNR.DepthInverted", frame.guides.depthInverted ? 1u : 0u);
                 params.SetFloat("DLSSNR.MVecScaleX", frame.guides.motionScaleX);
                 params.SetFloat("DLSSNR.MVecScaleY", frame.guides.motionScaleY);
-                Region(params, "Color", ctx->w, ctx->h);
-                Region(params, "Output", ctx->w, ctx->h);
+                Region(params, colorRegion, ctx->w, ctx->h);
+                Region(params, outputRegion, ctx->w, ctx->h);
                 for (unsigned g = 1; g < 3; ++g)
                 {
                     const auto& d = frame.resourceMetadata[g].description;
-                    Region(params, g == 1 ? "Depth" : "MVec",
+                    Region(params, g == 1 ? depthRegion : motionRegion,
                            frame.guides.width[g] ? frame.guides.width[g] : unsigned(d.Width),
                            frame.guides.height[g] ? frame.guides.height[g] : d.Height,
                            frame.guides.originX[g], frame.guides.originY[g]);
@@ -1103,25 +1112,31 @@ struct PassExecutor12::Impl
                 status.actualPasses = 1;
                 recording->evaluated = true;
                 evaluatedOk = true;
-                Transition(list, answer, UAV, SRV);
-                readable = true;
                 final = answer;
             }
         }
+        // Everything below only has to be visible before the next command that
+        // touches these buffers, so it shares one caller-owned batch.
+        BarrierBatch12 tail(list);
         if (final)
         {
             srv(7, final);
+            // The answer becomes readable and the private output becomes writable;
+            // both must land before the resolve dispatch, so one call carries them.
+            BarrierBatch12 resolve(list);
+            resolve.Add(final, UAV, SRV);
             if (!frame.resolveTarget && ctx->outputReadable)
             {
-                Transition(list, ctx->output.Get(), SRV, UAV);
+                resolve.Add(ctx->output.Get(), SRV, UAV);
             }
+            resolve.Flush();
             c.mode = 1;
             run(6, c);
             if (!frame.resolveTarget)
             {
                 // Private output is read by the color copy-back; the game UAV used by
                 // DirectResolve already stays in its expected UAV state.
-                Transition(list, resolveTarget, UAV, SRV);
+                tail.Add(resolveTarget, UAV, SRV);
                 ctx->outputReadable = true;
             }
             result = resolveTarget;
@@ -1136,19 +1151,14 @@ struct PassExecutor12::Impl
             status.error = E_FAIL;
             status.reason = "First NR layer evaluation failed; original frame preserved";
         }
-        // Both buffers return to UAV for the next recording: one barrier call.
+        // Both buffers return to UAV for the next recording, in the same call as the
+        // resolve output above.
+        tail.Add(ctx->proxy.Get(), SRV, UAV);
+        if (final)
         {
-            D3D12_RESOURCE_BARRIER barriers[2]{};
-            ID3D12Resource* targets[2]{ctx->proxy.Get(), ctx->answer.Get()};
-            const unsigned count = readable ? 2u : 1u;
-            for (unsigned n = 0; n < count; ++n)
-            {
-                barriers[n].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-                barriers[n].Transition = {targets[n], D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES, SRV,
-                                          UAV};
-            }
-            list->ResourceBarrier(count, barriers);
+            tail.Add(ctx->answer.Get(), SRV, UAV);
         }
+        tail.Flush();
         if (recording->timing)
         {
             list->EndQuery(recording->timing->timestamps.Get(), D3D12_QUERY_TYPE_TIMESTAMP, 1);
@@ -1173,7 +1183,6 @@ HRESULT PassExecutor12::Record(ID3D12GraphicsCommandList* list, const PassFrame&
                                const PassSettings& s, bool reset,
                                std::shared_ptr<void>& keep, ID3D12Resource*& result)
 {
-    std::lock_guard lock(impl->mutex);
     HRESULT hr = S_OK;
     try
     {
@@ -1201,23 +1210,17 @@ HRESULT PassExecutor12::Record(ID3D12GraphicsCommandList* list, const PassFrame&
 }
 PassStatus PassExecutor12::Snapshot() const
 {
-    std::lock_guard lock(impl->mutex);
     return impl->status;
 }
 void PassExecutor12::InvalidateHistory()
 {
-    std::lock_guard lock(impl->mutex);
-    if (impl->context)
+    if (impl->context && impl->context->layer)
     {
-        if (impl->context->layer)
-        {
-            impl->context->layer->first = true;
-        }
+        impl->context->layer->first = true;
     }
 }
 void PassExecutor12::RetireCompletedInputs()
 {
-    std::lock_guard lock(impl->mutex);
     if (impl->previous)
     {
         impl->previous->RetireInputs();

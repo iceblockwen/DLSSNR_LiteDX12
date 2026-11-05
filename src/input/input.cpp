@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 // Adapted from the earlier Lite build/src/input.cpp; cursor defer/restore also checked
 // against Opt's input_system_cursor.cpp and ReShade's input_windows.cpp.
 #include "input.hpp"

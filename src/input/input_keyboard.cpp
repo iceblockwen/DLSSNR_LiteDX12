@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 // Release ownership checked against Opt input_system_messages.cpp and
 // ReShade input_windows.cpp. Lite's input hooks remain the interception base.
 #include "input_keyboard.hpp"

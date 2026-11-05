@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 #include "white_point.hpp"
 #include "lite_meter_shader.hpp"
 #include <algorithm>
@@ -138,6 +137,7 @@ WhiteMeter12::WhiteMeter12(ID3D12Device* d)
     ComputePipeline(d, ranges, 2, 0, liteMeterShader, liteMeterShaderSize,
                     root.ReleaseAndGetAddressOf(), pipeline.ReleaseAndGetAddressOf());
 }
+// The pass has already validated the source, the exposure texture and the list's device.
 HRESULT WhiteMeter12::Record(ID3D12GraphicsCommandList* list, ID3D12Resource* source, std::shared_ptr<WhiteReadback>& output, ID3D12Resource* exposure, const std::shared_ptr<GpuTicket>& ticket)
 {
     if (!list || !source)
@@ -146,23 +146,8 @@ HRESULT WhiteMeter12::Record(ID3D12GraphicsCommandList* list, ID3D12Resource* so
     }
     try
     {
-        auto desc = source->GetDesc();
-        ComPtr<ID3D12Device> owner, listOwner;
-        ThrowIfFailed(source->GetDevice(IID_PPV_ARGS(&owner)));
-        ThrowIfFailed(list->GetDevice(IID_PPV_ARGS(&listOwner)));
-        if (owner.Get() != device.Get() || listOwner.Get() != device.Get())
-        {
-            return E_INVALIDARG;
-        }
-        if (desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || desc.SampleDesc.Count != 1 || desc.DepthOrArraySize != 1 || !desc.Width || !desc.Height || desc.Flags & D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE)
-        {
-            return E_NOTIMPL;
-        }
-        if (!ShaderViewCompatible(desc.Format))
-        {
-            return E_NOTIMPL;
-        }
-        D3D12_FEATURE_DATA_FORMAT_SUPPORT support{ViewFormat(desc.Format)};
+        const auto format = ViewFormat(source->GetDesc().Format);
+        D3D12_FEATURE_DATA_FORMAT_SUPPORT support{format};
         ThrowIfFailed(device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &support, sizeof(support)));
         if (!(support.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_LOAD))
         {
@@ -187,16 +172,6 @@ HRESULT WhiteMeter12::Record(ID3D12GraphicsCommandList* list, ID3D12Resource* so
             }
             recording = std::make_shared<WhiteReadback>();
         }
-        if (exposure)
-        {
-            auto d = exposure->GetDesc();
-            ComPtr<ID3D12Device> exposureOwner;
-            ThrowIfFailed(exposure->GetDevice(IID_PPV_ARGS(&exposureOwner)));
-            if (exposureOwner.Get() != device.Get() || d.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || d.Width != 1 || d.Height != 1 || d.DepthOrArraySize != 1 || d.MipLevels != 1 || d.SampleDesc.Count != 1 || (d.Flags & D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE) || !ShaderViewCompatible(d.Format))
-            {
-                exposure = nullptr;
-            }
-        }
         recording->source = source;
         recording->exposure = exposure;
         recording->hasExposure = exposure != nullptr;
@@ -206,7 +181,7 @@ HRESULT WhiteMeter12::Record(ID3D12GraphicsCommandList* list, ID3D12Resource* so
         {
             D3D12_HEAP_PROPERTIES heap{};
             heap.Type = D3D12_HEAP_TYPE_DEFAULT;
-            desc = {};
+            D3D12_RESOURCE_DESC desc{};
             desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
             desc.Width = desc.Height = 64;
             desc.DepthOrArraySize = desc.MipLevels = 1;
@@ -238,7 +213,7 @@ HRESULT WhiteMeter12::Record(ID3D12GraphicsCommandList* list, ID3D12Resource* so
         recording->ticket = ticket;
         auto cpu = recording->heap->GetCPUDescriptorHandleForHeapStart();
         D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
-        srv.Format = ViewFormat(source->GetDesc().Format);
+        srv.Format = format;
         srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
         srv.Texture2D.MipLevels = 1;
         srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;

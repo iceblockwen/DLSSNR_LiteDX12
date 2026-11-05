@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 // The process-lifetime registry the graphics layer owns: the panel bound to each
 // swapchain and the lock that guards it. panel.cpp includes this to reach the same
 // lock, nothing else does.

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 // Direct3D 12 only: DXGI factory/swapchain interception, loader monitoring for
 // the game's NGX lookups, and the queue Execute/Reset submission tracking.
 #include "wrappers.hpp"

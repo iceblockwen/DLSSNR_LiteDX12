@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "white_point.hpp"
 #include "ngx_parameters.hpp"
@@ -36,7 +35,6 @@ struct PassStatus
     HRESULT whiteMeasurementError = S_OK;
     bool gpuExposureValid{}, gpuDivisorValid{};
     float gpuExposure{}, gpuDivisor = 1;
-    InputOrigin inputOrigin = InputOrigin::Unknown;
     UINT64 inputTime{};
     bool depthFlipped{}, inputConverted[3]{};
     float motionScaleX = 1, motionScaleY = 1;
@@ -46,9 +44,10 @@ struct PassStatus
 // resolveTarget arrives and leaves in UNORDERED_ACCESS. The recording owner must
 // submit/discard frame.ticket and retain keepAlive until its fence completes.
 // Feature initialization uses the caller's list, as in Lite's default route.
-// submissionDependencies is what lets steady-state evaluations follow already submitted
-// work: the actual Execute owner orders ticket dependencies before submitting the
-// recorded list. Descriptor reuse and readback still require completion.
+// Steady-state evaluations may follow already submitted work: the actual Execute
+// owner orders ticket dependencies before submitting the recorded list. Descriptor
+// reuse and readback still require completion.
+// Not thread-safe: every call is made under the frame ledger's lock.
 class PassExecutor12
 {
   public:

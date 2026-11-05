@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 // Measured-white meter: bounded samples of the 64x64 tile lattice (mode 4 of
 // Lite's shaders/dlssnr.hlsl). Slot 0 stays reserved like Lite's exposure carrier.
 Texture2D<float4> source:register(t0);Texture2D<float4> gameExposure:register(t1);RWTexture2D<float> grid:register(u0);

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 #include "runtime.hpp"
 #include "graphics.hpp"
 #include "config.hpp"
@@ -17,9 +16,6 @@
 #include <string>
 #include <thread>
 #include <share.h>
-
-#define LITE_WIDEN2(text) L##text
-#define LITE_WIDEN(text) LITE_WIDEN2(text)
 
 namespace
 {
@@ -229,13 +225,6 @@ HMODULE own{};
 std::once_flag once;
 std::atomic<DWORD> startupError{};
 }
-namespace litedx12
-{
-DWORD StartupError()
-{
-    return startupError.load();
-}
-}
 extern "C" __declspec(dllexport) DWORD WINAPI Start(void*)
 {
     std::call_once(once, []
@@ -271,7 +260,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI Start(void*)
                            startupError = ERROR_DLL_INIT_FAILED;
                        }
                    });
-    return litedx12::StartupError();
+    return startupError.load();
 }
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID)
 {

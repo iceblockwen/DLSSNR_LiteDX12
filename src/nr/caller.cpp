@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 // Lite pass.cpp / Opt dlssnr/forwarder: calls must originate in nvngx.dll-containing
 // module; a tail call would erase that frame and fail the NR caller check.
 #include "contracts.hpp"

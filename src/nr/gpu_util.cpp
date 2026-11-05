@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 #include "gpu_util.hpp"
 namespace litedx12::nr
 {

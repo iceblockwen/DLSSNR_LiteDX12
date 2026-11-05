@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 // COM forwarding adapted from the earlier Lite build/src/panel_internal.hpp and capture.cpp.
 // Only the swapchain is wrapped. The factory object is never replaced: its native
 // CreateSwapChain* entries are detoured instead, because handing the game a foreign

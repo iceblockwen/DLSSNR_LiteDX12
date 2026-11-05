@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 // Guide debug previews (colour / depth / motion), compiled to CSO at build time.
 Texture2D<float4> source : register(t0);
 RWTexture2D<float4> target : register(u0);

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 #include "capture12.hpp"
 #include "preview.hpp"
 #include "../graphics.hpp"
@@ -11,7 +10,6 @@
 #include <atomic>
 #include <map>
 #include <mutex>
-#include <set>
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -29,7 +27,6 @@ struct FrameLedger
     // Preview pipelines and their image, per device. Recorded on the game's list so the preview
     // never depends on an input outliving the frame.
     std::map<ID3D12Device*, std::shared_ptr<Preview12>> previews;
-    std::set<ID3D12Device*> retiredDevices;
     std::map<std::pair<ID3D12Device*, void*>, std::unique_ptr<PassExecutor12>> model12;
     // Executors whose game stream went away, kept so a replacement stream reuses the NR feature and
     // its full-frame textures instead of paying one NGX CreateFeature plus ~165 MB at 4K.
@@ -200,14 +197,7 @@ void Collect()
         const auto done = job->fence ? job->fence->GetCompletedValue() : 0;
         if (done != UINT64_MAX && job->completion && done >= job->completion)
         {
-            job->ClearBorrowed();
-            job->modelRecording.reset(); // safe only at GPU completion
-            job->frame.resolveTarget.Reset();
-            job->frame.resolveTargetMetadata = {};
-            job->frame.resources = {};
-            job->frame.resourceMetadata = {};
-            job->frame.exposureTexture.Reset();
-            job->frame.exposureMetadata = {};
+            job->ReleaseFrame(); // safe only at GPU completion
             retired = true;
             it = l.submitted.erase(it);
         }
@@ -241,12 +231,12 @@ void RetireCompleted()
     }
     std::lock_guard lock(Ledger().mutex);
     Collect();
+    // Destroying an executor drains the features it parked.
     if (!ModelRequested() && modelCached.exchange(false))
     {
         Ledger().model12.clear();
         Ledger().spare12.clear();
     }
-    RetireModelFeatures();
 }
 void PrepareModel12(ID3D12Device* device)
 {
@@ -271,7 +261,6 @@ void ReleaseDevice12(ID3D12Device* device)
 {
     std::lock_guard lock(Ledger().mutex);
     auto& l = Ledger();
-    l.retiredDevices.insert(device);
     l.previews.erase(device);
     l.copyPool.erase(device);
     Collect();
@@ -423,7 +412,6 @@ HRESULT Capture12(ID3D12GraphicsCommandList* commands, const FrameInput& origina
                 status.frameSkipped = true;
                 status.hasInput = true;
                 status.inputTime = GetTickCount64();
-                status.inputOrigin = input.origin;
                 status.reason = bindings->Reason();
                 PublishPass(status);
                 return S_FALSE;
@@ -433,7 +421,6 @@ HRESULT Capture12(ID3D12GraphicsCommandList* commands, const FrameInput& origina
         {
             throw E_NOTIMPL;
         }
-        l.retiredDevices.erase(device.Get());
         auto job = AcquireCopy(device.Get());
         if (!job)
         {
@@ -445,22 +432,9 @@ HRESULT Capture12(ID3D12GraphicsCommandList* commands, const FrameInput& origina
             return S_FALSE;
         }
 
+        job->ReleaseFrame();
         job->frame.guides = input.guides;
-        job->frame.origin = input.origin;
-        for (auto& converted : job->frame.converted)
-        {
-            converted = false;
-        }
         job->frame.ticket = std::make_shared<GpuTicket>();
-        job->frame.submissionDependencies = true;
-        job->frame.resources = {};
-        job->frame.resourceMetadata = {};
-        job->frame.resolveTarget.Reset();
-        job->frame.resolveTargetMetadata = {};
-        job->frame.exposureTexture.Reset();
-        job->frame.exposureMetadata = {};
-        job->ClearBorrowed();
-        job->modelRecording.reset();
         struct PreparationGuard
         {
             Captured12& job;
@@ -470,13 +444,7 @@ HRESULT Capture12(ID3D12GraphicsCommandList* commands, const FrameInput& origina
                 if (!registered)
                 {
                     job.frame.ticket->Discard();
-                    job.frame.resources = {};
-                    job.frame.resourceMetadata = {};
-                    job.frame.resolveTarget.Reset();
-                    job.frame.resolveTargetMetadata = {};
-                    job.frame.exposureTexture.Reset();
-                    job.frame.exposureMetadata = {};
-                    job.ClearBorrowed();
+                    job.ReleaseFrame();
                 }
             }
         } preparation{*job};
@@ -621,8 +589,8 @@ HRESULT Capture12(ID3D12GraphicsCommandList* commands, const FrameInput& origina
         eachCopy([&](unsigned, ID3D12Resource* source, D3D12_RESOURCE_STATES sourceState,
                      ID3D12Resource* copy, D3D12_RESOURCE_STATES copyState)
                  {
-                     copies.Add(copy, copyState, D3D12_RESOURCE_STATE_COPY_DEST);
-                     copies.Add(source, sourceState, D3D12_RESOURCE_STATE_COPY_SOURCE);
+                     copies.AddSubresource(copy, 0, copyState, D3D12_RESOURCE_STATE_COPY_DEST);
+                     copies.AddSubresource(source, 0, sourceState, D3D12_RESOURCE_STATE_COPY_SOURCE);
                  });
         copies.Flush();
         eachCopy([&](unsigned n, ID3D12Resource* source, D3D12_RESOURCE_STATES,
@@ -641,9 +609,9 @@ HRESULT Capture12(ID3D12GraphicsCommandList* commands, const FrameInput& origina
         eachCopy([&](unsigned, ID3D12Resource* source, D3D12_RESOURCE_STATES sourceState,
                      ID3D12Resource* copy, D3D12_RESOURCE_STATES)
                  {
-                     copies.Add(source, D3D12_RESOURCE_STATE_COPY_SOURCE, sourceState);
-                     copies.Add(copy, D3D12_RESOURCE_STATE_COPY_DEST,
-                                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+                     copies.AddSubresource(source, 0, D3D12_RESOURCE_STATE_COPY_SOURCE, sourceState);
+                     copies.AddSubresource(copy, 0, D3D12_RESOURCE_STATE_COPY_DEST,
+                                           D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
                  });
         copies.Flush();
         reads.Begin();
@@ -854,15 +822,8 @@ void DiscardIdentity(IUnknown* identity) noexcept
         }
         auto& job = *it->second;
         job.frame.ticket->Discard();
-        job.ClearBorrowed();
         job.list.Reset();
-        job.frame.resources = {};
-        job.frame.resourceMetadata = {};
-        job.frame.resolveTarget.Reset();
-        job.frame.resolveTargetMetadata = {};
-        job.frame.exposureTexture.Reset();
-        job.frame.exposureMetadata = {};
-        job.modelRecording.reset();
+        job.ReleaseFrame();
         pending.erase(it);
         pendingCount = pending.size();
     }

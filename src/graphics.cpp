@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 // The swapchain side of the panel, split out of panel.cpp: it owns the registry and
 // creates and retires one panel per swapchain. No NR and no UI work happens here.
 #include "graphics_registry.hpp"

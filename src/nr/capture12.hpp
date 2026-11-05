@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 // The DX12 frame pipeline. It observes the game's own NGX SR evaluate, captures
 // that frame's colour/depth/motion, runs the NR pass on the game's own command
 // list, and retires every resource on the real fence. This is the "frame ledger":
@@ -29,12 +28,19 @@ struct Captured12
     ComPtr<ID3D12Resource> exposureCopy;
     D3D12_RESOURCE_DESC exposureDesc{};
     D3D12_RESOURCE_STATES exposureCopyState{}, recordedExposureState{};
-    // Game resources this recording borrowed. Dropping them is safe only once the
-    // owning fence completed, so the model recording stays separate.
-    void ClearBorrowed()
+    // Drops every game and model reference the recording holds. Safe only once the
+    // owning fence completed or the recording was never submitted.
+    void ReleaseFrame()
     {
         borrowed = {};
         borrowedExposure.Reset();
+        modelRecording.reset();
+        frame.resources = {};
+        frame.resourceMetadata = {};
+        frame.resolveTarget.Reset();
+        frame.resolveTargetMetadata = {};
+        frame.exposureTexture.Reset();
+        frame.exposureMetadata = {};
     }
 };
 struct GameDlssStatus

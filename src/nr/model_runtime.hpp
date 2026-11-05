@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "ngx_parameters.hpp"
 #include "contracts.hpp"
@@ -76,9 +75,6 @@ class ModelRuntime
     unsigned Create(ID3D12GraphicsCommandList*, void**);
     unsigned Evaluate(ID3D12GraphicsCommandList*, void*);
     unsigned Release(void*);
-    void SetFloat(const char*, float);
-    void SetUnsigned(const char*, unsigned);
-    void SetResource(const char*, ID3D12Resource*);
     static HRESULT Adapter(ID3D12Device*, unsigned& vendor, std::wstring& name);
 
   private:

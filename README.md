@@ -58,7 +58,7 @@ Requires an SDR RGB10A2 flip-discard chain, blocking Present and one direct queu
 Unsupported paths are skipped and logged. Native non-SDR color space requests
 bypass conversion. Frame generation compatibility remains unverified.
 
-HDR mapping uses RenoDX's inverse BT.2446 Method A (see Licenses/RenoDX_HDR_MIT.txt):
+HDR mapping uses the inverse BT.2446 Method A algorithm:
 luma/chroma reconstruction in BT.2020 with SdrReferenceNits (default 100) and
 PeakNits. Domain, radicand and black guards are local safety additions, not
 additional artistic highlight curves. A small gap at the rounded lower-knee
@@ -75,7 +75,6 @@ INI keys: InputEncoding=0/1/2, PeakNits=1000, SdrReferenceNits=100. The old cust
 curve and its controls are removed; legacy PaperWhiteNits/HighlightStart/HighlightPower/
 HighlightStrength/Enabled keys are ignored, as are the removed Method, InputGrayLinear
 and OutputGrayNits keys. Slider changes apply live and save on release. Only HDR builds
-compile these modules. Attribution is shipped under
-Licenses/RenoDX_HDR_MIT.txt. This still processes UI with the final SDR image and
+compile these modules. This still processes UI with the final SDR image and
 cannot recover scene highlights discarded before Present. Game validation is
 performed by the user.

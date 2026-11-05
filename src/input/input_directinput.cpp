@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 // Lite's state/data detours, checked against Opt input_system_directinput.cpp.
 // ANSI/Unicode mouse/keyboard implementations may have different target entries.
 #include "input.hpp"

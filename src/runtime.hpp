@@ -44,6 +44,4 @@ Detail DetailLevel() noexcept;
 void LogFormat(Detail level, const wchar_t* format, ...) noexcept;
 // hooks.cpp: the startup detours (factory exports, loader, GetProcAddress).
 void InstallCapture();
-// What Start returned: the loader's failure code, or 0 when startup succeeded.
-DWORD StartupError();
 }

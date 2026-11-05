@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 // The one contract between the observation layer and the pipeline: what the game
 // handed its own upscaler for this frame, plus the working set the pass records.
 #pragma once
@@ -8,12 +7,6 @@
 #include <memory>
 namespace litedx12::nr
 {
-// Where a frame came from. Only the game's own NGX DLSS/DLAA evaluate is produced.
-enum class InputOrigin : unsigned
-{
-    Unknown,
-    GameDlss
-};
 struct Exposure
 {
     bool sceneLinear{}, prePresent{}, exposurePresent{};
@@ -47,7 +40,6 @@ struct FrameInput
     ResourceMetadata exposureMetadata{};
     D3D12_RESOURCE_STATES exposureState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
     bool reset{};
-    InputOrigin origin = InputOrigin::Unknown;
 };
 // The pass's working set: owned references, the ticket proving submission, and the
 // state the recording left the resources in.
@@ -60,12 +52,9 @@ struct PassFrame
     ComPtr<ID3D12Resource> resolveTarget;
     ResourceMetadata resolveTargetMetadata{};
     Guides guides;
+    // The Execute owner runs ticket.PrepareSubmission on the actual queue before Execute.
     std::shared_ptr<GpuTicket> ticket;
     ComPtr<ID3D12Resource> exposureTexture;
     ResourceMetadata exposureMetadata{};
-    // Owner guarantees ticket.PrepareSubmission on the actual queue before Execute.
-    bool submissionDependencies{};
-    InputOrigin origin = InputOrigin::Unknown;
-    bool converted[3]{}; // actual format conversion, not an unchanged copy
 };
 }

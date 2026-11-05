@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 // Guide previews: Lite's shaders/dlssnr.hlsl view modes, separated from the model pass.
 #include "preview.hpp"
 #include "lite_preview_shader.hpp"

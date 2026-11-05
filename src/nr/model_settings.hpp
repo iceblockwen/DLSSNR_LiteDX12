@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "pass.hpp"
 namespace litedx12::nr

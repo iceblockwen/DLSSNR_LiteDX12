@@ -1,6 +1,6 @@
 #pragma once
-// Shared by the DXGI/loader hooks and the DX11 depth hooks: one Detours entry
-// table per hooked signature, staged inside a single checked transaction.
+// Shared by every Detours install (loader, DXGI, D3D12, input): one entry table per
+// hooked signature, staged inside a single checked transaction.
 #include <windows.h>
 #include <intrin.h>
 #include <tlhelp32.h>

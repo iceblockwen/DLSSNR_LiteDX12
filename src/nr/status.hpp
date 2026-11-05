@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 // Panel/preview state: whether the resource preview is on, the display scale, the
 // depth preview flips, and the status block the panel reads. No frame work here.
 #pragma once

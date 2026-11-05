@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 // Panel::Impl: the panel's state. Its methods are split across three files —
 // panel.cpp (construction, window subclass and teardown), panel_gpu.cpp (the
 // Direct3D 12 renderer) and panel_ui.cpp (the ImGui window). Nothing outside
@@ -92,8 +91,6 @@ struct Panel::Impl
         ComPtr<ID3D12Resource> previewSource;
     };
     std::vector<Frame> frames;
-    // Where a failure happened; printed by Failure().
-    const wchar_t* renderStage = L"panel input/window callback";
     // Committed on edit end, never per frame of a drag.
     bool CommitTuning(nr::ModelSettings* target = nullptr);
     void SyncPreviewVisibility();

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 #include "model_runtime.hpp"
 #include "ngx_initialization.hpp"
 #include "../graphics.hpp"
@@ -307,23 +306,7 @@ unsigned ModelRuntime::Evaluate(ID3D12GraphicsCommandList* list, void* feature)
 unsigned ModelRuntime::Release(void* feature)
 {
     std::lock_guard lock(mutex);
-    const auto rc = release ? unsigned(LiteNrRelease(release, feature)) : 0xBAD0000Bu;
-    return rc;
-}
-void ModelRuntime::SetFloat(const char* key, float v)
-{
-    std::lock_guard lock(mutex);
-    writer.Float(key, v);
-}
-void ModelRuntime::SetUnsigned(const char* key, unsigned v)
-{
-    std::lock_guard lock(mutex);
-    writer.Unsigned(key, v);
-}
-void ModelRuntime::SetResource(const char* key, ID3D12Resource* v)
-{
-    std::lock_guard lock(mutex);
-    writer.Resource(key, v);
+    return release ? unsigned(LiteNrRelease(release, feature)) : 0xBAD0000Bu;
 }
 ModelRuntime& Runtime()
 {

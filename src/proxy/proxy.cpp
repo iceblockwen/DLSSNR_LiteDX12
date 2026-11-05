@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 // Thin DXGI proxy: forwards every system export unchanged and starts the body.
 // No graphics/UI/model ownership in this DLL; the body wraps factories through
 // its own detour of the system CreateDXGIFactory* exports.

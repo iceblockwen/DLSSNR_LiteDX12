@@ -202,3 +202,75 @@
 1. 日志：恢复失败日志（保留异步队列）还是精简为只写启动日志。
 2. `pass.cpp:484` 的第一次 `white.Resolve` 能否合并到第 537 行。
 3. version / winmm 入口源文件是否合并进 dxgi 入口。
+
+## 10. 第二轮复查（`14a9c8c` 之后）
+
+**A 批已做**（行为不变，−153 行，Release/Debug `/W4` 零警告）：删 `retiredDevices`、`CopyShaderInput12`、`ModelRuntime::Set*`、writer `Slot/Verified`、`renderStage`、`Entry` 重复字段、`firstObservation`、`InputOrigin`、恒 false 的 `converted`、恒 true 的 `submissionDependencies`；四处"清空 frame"合为 `Captured12::ReleaseFrame()`；`PassExecutor12::Impl::mutex` 删（全部调用在账本锁内）；`WindowFocused` 并入 `ForegroundMatches`；`WhiteMeter12::Record` 去掉与 pass 重复的校验；`StartupError` 文件内私有；`DrainParkedFeatures` 无停车时免锁；`Region` 改常量 key 表（去 16 次 `snprintf`）。日志模块按决定保留。
+
+**待做**（行号以本节写成时为准）：
+
+### B1 无关 list 的 Reset / Execute 不拿账本锁
+
+- 现况：NR 开着时几乎每帧都有 pending，`Pending()` 快路径失效。`Discard`（`capture12.cpp:791`，每次游戏 Reset）先 QI 再拿账本锁查 map；`PrepareSubmission` / `Submitted`（`:710` / `:747`，每次 Execute 两次）拿锁后对每个 list 先比裸指针、不中再 QI。`Capture12` 持同一把锁跑完整个录制（含 NGX Evaluate / Create），多线程录制的引擎会在这里排队。
+- 方案：pending 上限本就是 4（`:364`），加 `std::atomic<IUnknown*> pendingIdentity[4]` + `std::atomic<ID3D12CommandList*> pendingRaw[4]`，在锁内随 `pending.emplace/erase` 同步写。Reset/Execute 先比裸指针，不中再 QI 比 identity，都不中直接返回，不拿锁。
+- 正确性：游戏必须在 Close 与 Execute 之间自己同步，这已给出 happens-before；假阳性只会多拿一次锁。
+- 收益：去掉 NR 期间所有线程的 Reset/Execute 锁争用。风险低。
+
+### B2 command_guard 影子状态 ComPtr → 裸指针
+
+- 现况：`State::pipeline`、`heaps[2]`、`predicate` 与 `Root::signature`（`command_guard.cpp:35,74-77`）都是 ComPtr，每次 `SetPipelineState` / `SetDescriptorHeaps` / `SetComputeRootSignature` / `SetGraphicsRootSignature` 都要 AddRef 新对象、Release 旧对象。多线程共用同一个 PSO / 堆时，两次互锁会在同一 cache line 上来回争用。闭合的 list 也会把游戏对象一直留到下次 Reset。
+- 方案：改裸指针。恢复只发生在同一次录制内（evaluate 期间的 `CommandStateScope`），D3D12 本来就要求应用让 list 引用的对象活到执行完；Reset 时状态清零，不会用到上一次录制的指针。
+- 收益：每个状态设置调用省 2 次互锁。风险：低，靠的是 D3D12 规则而不是假设。
+
+### B3 ExecuteIndirect 不再清零和拷贝 1KB
+
+- 现况：`Indirect::Call`（`:638-640`）每次构造 `IndirectInfo{}`，约 1032 字节清零；`GetPrivateData` 再拷一遍；常量参数还要在栈上清零 `zero[64]`。
+- 方案：`SetPrivateData` 只存头部加 `count` 条 change（常见签名 24–56 字节）；读取时按返回的字节数校验；`zero` 改成 `static constexpr`。
+- 收益：每次 EI 省约 2KB 内存操作。GPU-driven 引擎每帧上百次时才明显，其余可忽略。
+
+### B4 `PrepareModel12` 移出 Graphics 锁
+
+- 现况：`DrawSwapchain`（`graphics.cpp:44`）持 Graphics 锁调用 `Panel::Draw`，后者调 `RetireCompleted` 和 `PrepareModel12`（`panel.cpp:509-512`）。首次 `Runtime().Initialize` 要做 LoadLibrary core / model、`NVSDK_NGX_D3D12_Init`、`GetCapabilityParameters`，耗时几百毫秒。这期间游戏消息线程进 `WindowProc`（`panel.cpp:221`）会被同一把锁堵住，表现为窗口无响应、输入积压。
+- 方案：`DrawSwapchain` 在锁内取出 panel 的 device，解锁后再调 `RetireCompleted` / `PrepareModel12`，然后重新加锁调 `Draw`。顺带消除 Graphics→Ledger 的锁嵌套。
+- 收益：消息线程不再陪着 NGX 初始化等待。渲染线程本身仍会卡这一次，见 D9。
+
+### C5 帧尾 barrier 合并
+
+- 现况（非 DirectResolve，本帧已编辑）：compose 之后依次是 output UAV→SRV（`pass.cpp:1123`）、proxy + answer SRV→UAV（`:1149`）、`reads.Restore()` 每个直读输入各一次（`capture12.cpp:688`）、`CopyNrResult12` 前 output SRV→COPY_SOURCE + color→COPY_DEST、拷贝后再各转回（`capture12_input.hpp:156`）。共 4+k 次调用，而且 output 走 UAV→SRV→COPY_SOURCE、color 走 SRV→UAV→COPY_DEST，各多一个中间态。下一帧还要把 output SRV→UAV（`pass.cpp:1115`）。
+- 方案：Record 不在内部收尾，而是把这些 barrier 交给 Capture12 合成一批：output UAV→COPY_SOURCE、proxy / answer SRV→UAV、直读输入恢复、color 直接转 COPY_DEST；拷贝后一批：color→原状态、output→UAV（下一帧的 `:1115` 随之消失）。
+- 收益：帧尾从 4+k 次 barrier 调用降到 2 次，去掉 2 个中间态。每次 barrier 都可能触发驱动的 pipeline drain 或缓存 flush。
+- 风险：中。状态链写错会花屏或 device removed，需要开 D3D12 debug layer 跑一次。
+
+### C6 InputReadStates12 批量
+
+- 现况：`Begin` / `Restore`（`capture12_input.hpp:112-127`）对每个直读输入单独调 `ResourceBarrier`，最多 4 次。
+- 方案：改用现成的 `BarrierBatch12`，它本身就只转 subresource 0。
+- 收益：开头和结尾各从最多 4 次降到 1 次。风险极低；与 C5 合做时，Restore 会并入 C5 的帧尾批次。
+
+### C7 guide 转换 barrier 批量
+
+- 现况：`pass.cpp:965-1008` 对 depth / MV 各做一遍：twin SRV→UAV → dispatch → twin UAV→SRV，GPU 上两个 dispatch 被串行化；之后 `run(0)` 完再单独转 proxy（`:1044`）。
+- 方案：进循环前一批把两个 twin 转 UAV；两个 dispatch 连续发出（写不同资源，没有冒险，可以并行）；`run(0)` 之后一批把两个 twin 和 proxy 转 SRV。
+- 收益：模型之前少 2–3 个 GPU 串行点。只有需要格式转换或深度翻转时才有。风险低。
+
+### D8 调参只改强度时不重建 feature（需实测）
+
+- 现况：`SameTuning` 不等（`pass.cpp:698`）就 `layer.reset()`，下一帧重新 CreateFeature，有一次卡顿，并且 `first = true` 丢掉时域历史，画面会闪一下。但 `Tuning()`（`:1061`）每次 evaluate 都会重写全部 8 个参数。
+- 疑点：如果模型每帧都读 Intensity / Structure / Tone / Skin，这四个就不用重建；Preset / Style / AutoMask / UICorrection 可能只在创建时生效。参考工程里没有能证实这一点的代码。
+- 实测：临时让 `SameTuning` 只比较后四个，构建后在游戏里拖 Intensity 0↔1，看画面是否即时变化。变了就采用，没变就保持现状。
+
+### D9 NGX 初始化移到后台（需实测）
+
+- 现况：开启 NR 后第一次 Present 在渲染线程同步跑完整个 `Initialize`（LoadLibrary、NGX Init、能力查询），游戏会冻住一下。
+- 方案：发现 device 后由后台线程调 `Initialize`；渲染线程只读原子 ready 标志，没好就跳过 NR。CreateFeature 必须用游戏的 list，仍留在录制里。
+- 疑点：NGX 是否允许在非渲染线程 Init，以及是否会与游戏自己的 NGX 初始化竞争共享 core。需要在游戏里验证。
+
+### D10 WM_INPUT 不走 Graphics 锁（需实测）
+
+- 现况：`WindowProc` 对每条消息都拿 Graphics 锁（`panel.cpp:221`），`WM_INPUT` 还在锁内调 `GetRawInputData`（`PanelRawHotkey`）。面板打开时渲染线程整个 `Draw`（UI 构建加录制，约 0.2–1 ms）都持有这把锁。8kHz 鼠标的每条消息都可能等这么久，造成输入延迟和消息积压。
+- 方案：窗口路由表加独立锁，或者改为只读快照；`WM_INPUT` 的热键判断不依赖面板状态，可以在锁外完成。
+- 风险：高。Graphics 锁同时保护 panel 的生命周期（`route->Active()`），拆开需要重新论证析构顺序。
+
+### 不做
+
+预览 3 个 tile 合并（只省代码量）；输入钩子 16 次 transaction 合并（只影响启动，而且一个失败会连累全部）。

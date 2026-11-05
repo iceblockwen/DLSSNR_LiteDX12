@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 // Observes the game's own NGX Direct3D 12 SR create/evaluate/release through the
 // loader GetProcAddress hook and hands the evaluate's resources to the NR pass.
 // Opt NR EvaluateAfterUpscale parameter handoff checked; this is resource capture only.
@@ -28,10 +27,8 @@ struct Metadata : GuideMetadata
 struct Entry
 {
     HMODULE module{};
-    FARPROC create12{}, eval12{}, release12{}, eval12C{};
-    // The four addresses again, lock-free: the stubs run on every game NGX call and
-    // the installer writes them once, under mutex. Indexed like `originals` in
-    // ResolveNgx: create, evaluate, release, evaluate_C.
+    // The game's original NGX functions: create, evaluate, release, evaluate_C. Written
+    // once under mutex by ResolveNgx; the stubs read them lock-free on every call.
     std::atomic<FARPROC> hot[4]{};
     // One key per feature handle: every entry here is a D3D12 feature.
     std::map<void*, Metadata> features;
@@ -180,7 +177,6 @@ unsigned __cdecl Evaluate(
     {
         Metadata m;
         bool found = false;
-        bool firstObservation = false;
         {
             std::lock_guard lock(mutex);
             const auto it = entries[N].features.find(handle);
@@ -188,7 +184,6 @@ unsigned __cdecl Evaluate(
             {
                 m = it->second;
                 found = true;
-                firstObservation = !gameDlss.observed;
                 gameDlss.observed = true;
                 gameDlss.released = false;
                 gameDlss.result = result;
@@ -203,7 +198,6 @@ unsigned __cdecl Evaluate(
             {
                 FrameInput input;
                 input.resources[0] = GameResource(p, m, "Output", "DLSSD.Output");
-                input.origin = InputOrigin::GameDlss;
                 input.resources[1] = GameResource(p, m, "Depth", "DLSSD.Depth");
                 input.resources[2] = GameResource(p, m, "MotionVectors", "DLSSD.MotionVectors");
                 input.guides = Describe(p, m, input.resources, input.resourceMetadata);
@@ -240,16 +234,12 @@ unsigned __cdecl Release(void* handle)
     ReleaseModelStream(handle);
     return address ? reinterpret_cast<Fn>(address)(handle) : 1;
 }
-struct Thunks
-{
-    FARPROC create12, eval12, release12, eval12C;
-};
 template <size_t... N>
 auto Build(std::index_sequence<N...>)
 {
-    return std::array<Thunks, sizeof...(N)>{
-        Thunks{reinterpret_cast<FARPROC>(&Create<N>), reinterpret_cast<FARPROC>(&Evaluate<N>),
-               reinterpret_cast<FARPROC>(&Release<N>), reinterpret_cast<FARPROC>(&Evaluate<N, true>)}...};
+    return std::array<std::array<FARPROC, 4>, sizeof...(N)>{
+        std::array<FARPROC, 4>{reinterpret_cast<FARPROC>(&Create<N>), reinterpret_cast<FARPROC>(&Evaluate<N>),
+                               reinterpret_cast<FARPROC>(&Release<N>), reinterpret_cast<FARPROC>(&Evaluate<N, true>)}...};
 }
 }
 GameDlssStatus GameDlssSnapshot()
@@ -304,11 +294,8 @@ FARPROC ResolveNgx(HMODULE module, LPCSTR name, FARPROC original)
             }
             e.module = module;
         }
-        FARPROC* originals[]{&e.create12, &e.eval12, &e.release12, &e.eval12C};
-        *originals[field] = original;
         e.hot[field].store(original, std::memory_order_release);
-        const FARPROC replacements[]{thunks[n].create12, thunks[n].eval12, thunks[n].release12, thunks[n].eval12C};
-        return replacements[field];
+        return thunks[n][field];
     }
     return original;
 }

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 // Shared by every entry DLL: dxgi.dll and the alternative names (version.dll,
 // ...). Only the forwarded export table and its fallbacks differ, so loading
 // and export publication live here once.

@@ -35,16 +35,12 @@ using panel_detail::RtvFormat;
 
 namespace
 {
+// The render HWND may be a child of the actual input/foreground window.
+// Opt also treats the shared input root as focused.
 bool ForegroundMatches(HWND window)
 {
     const auto foreground = GetForegroundWindow();
     return window && foreground && GetAncestor(window, GA_ROOT) == GetAncestor(foreground, GA_ROOT);
-}
-bool WindowFocused(HWND window)
-{
-    // The render HWND may be a child of the actual input/foreground window.
-    // Opt also treats the shared input root as focused.
-    return ForegroundMatches(window);
 }
 }
 
@@ -60,9 +56,9 @@ void Panel::Impl::MenuKey(bool down)
         ImGui::SetCurrentContext(context);
     }
     status.visible = !status.visible;
-    inputFocused = WindowFocused(hwnd);
+    inputFocused = ForegroundMatches(hwnd);
     SyncPreviewVisibility();
-    CapturePanelInput(hwnd, status.visible && inputFocused && ForegroundMatches(hwnd));
+    CapturePanelInput(hwnd, status.visible && inputFocused);
 }
 void Panel::Impl::PollMenuKey()
 {
@@ -265,7 +261,7 @@ LRESULT CALLBACK Panel::Impl::WindowProc(HWND window, UINT message, WPARAM wpara
     }
     if (message == WM_SETFOCUS || (message == WM_ACTIVATEAPP && wparam))
     {
-        self->inputFocused = message == WM_SETFOCUS || WindowFocused(window);
+        self->inputFocused = message == WM_SETFOCUS || ForegroundMatches(window);
         if (self->status.visible)
         {
             CapturePanelInput(window, self->inputFocused && ForegroundMatches(window));
@@ -465,7 +461,7 @@ Panel::Panel(IDXGISwapChain* swapchain, ID3D12CommandQueue* capturedQueue)
     Check(Impl::Windows().Attach(p.hwnd, &p, Impl::WindowProc));
     p.windowAttached = true;
     InstallPanelInput(Impl::RouteKeyboard);
-    p.inputFocused = WindowFocused(p.hwnd);
+    p.inputFocused = ForegroundMatches(p.hwnd);
 }
 Panel::~Panel()
 {
@@ -523,8 +519,8 @@ void Panel::Draw(UINT flags) noexcept
     {
         PanelInputScope internalInput;
         ImGui::SetCurrentContext(p.context);
-        p.inputFocused = WindowFocused(p.hwnd);
-        CapturePanelInput(p.hwnd, p.inputFocused && ForegroundMatches(p.hwnd));
+        p.inputFocused = ForegroundMatches(p.hwnd);
+        CapturePanelInput(p.hwnd, p.inputFocused);
         const float scale = ImGui_ImplWin32_GetDpiScaleForHwnd(p.hwnd);
         if (scale != p.dpiScale)
         {
@@ -534,12 +530,10 @@ void Panel::Draw(UINT flags) noexcept
             p.dpiScale = scale;
             ImGui::GetIO().FontGlobalScale = scale / p.fontDpiScale;
         }
-        p.renderStage = L"renderer initialization";
         if (!p.rendererReady)
         {
             p.InitRenderer();
         }
-        p.renderStage = L"DX12 panel draw";
         p.Draw12();
     }
     catch (HRESULT hr)
@@ -554,7 +548,6 @@ void Panel::Draw(UINT flags) noexcept
 void Panel::BeforeResize()
 {
     auto& p = *impl;
-    p.renderStage = L"swapchain resize preparation";
     p.Drain();
     p.DestroyRenderer();
     nr::RetireCompleted();
@@ -562,7 +555,6 @@ void Panel::BeforeResize()
 void Panel::AfterResize(HRESULT hr, ID3D12CommandQueue* replacement)
 {
     auto& p = *impl;
-    p.renderStage = L"swapchain resize completion";
     if (replacement)
     {
         ComPtr<ID3D12Device> device;

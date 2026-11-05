@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
 // The panel's ImGui widgets: tooltips, the labelled sliders with a numeric-input
 // popup, and the reset control. Standalone: no panel state, no GPU objects.
 #pragma once
