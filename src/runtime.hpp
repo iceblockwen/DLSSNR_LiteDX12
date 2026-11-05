@@ -1,23 +1,32 @@
 #pragma once
 #include <windows.h>
+#include <string>
 
-namespace litedx12 {
-enum class State : unsigned { Waiting, Ready, Disabled, Failed };
+namespace litedx12
+{
+enum class State : unsigned
+{
+    Waiting,
+    Ready,
+    Disabled,
+    Failed
+};
 // One switch for every log line in the plugin.
 // Off: no log file is written and no message is formatted.
 // Basic: startup, identity, state changes and failures.
 // Verbose: additional diagnostics.
-enum class Detail : unsigned { Off = 0, Basic = 1, Verbose = 2 };
-// Fixed-size, versioned snapshot. No pointers into runtime-owned memory.
-struct Status {
-    bool enabled = true;
-    wchar_t pluginPath[1024]{};
-    wchar_t systemPath[1024]{};
+enum class Detail : unsigned
+{
+    Off = 0,
+    Basic = 1,
+    Verbose = 2
 };
-void Initialize(HMODULE plugin, HMODULE system);
+void Initialize(HMODULE plugin);
 void Fail(DWORD error);
-Status Snapshot();
-// Lock-free hot-path queries; Snapshot copies the full status block.
+// Folder of the plugin DLL, resolved once at Initialize. Files beside the plugin
+// (the model, the log) are found through it.
+const std::wstring& PluginFolder();
+// Lock-free hot-path queries.
 bool Enabled();
 bool Usable();
 bool SkipSmallSwapchains();
@@ -33,4 +42,8 @@ bool RequireComputeSignature();
 Detail DetailLevel() noexcept;
 // Formats only when the current level is at least `level`, so Off builds no string.
 void LogFormat(Detail level, const wchar_t* format, ...) noexcept;
+// hooks.cpp: the startup detours (factory exports, loader, GetProcAddress).
+void InstallCapture();
+// What Start returned: the loader's failure code, or 0 when startup succeeded.
+DWORD StartupError();
 }

@@ -69,7 +69,7 @@ target_compile_definitions(litedx12_frames PRIVATE UNICODE _UNICODE NOMINMAX WIN
 target_compile_options(litedx12_frames PRIVATE /W4 /EHsc /utf-8)
 target_link_libraries(litedx12_frames PUBLIC d3d11 d3d12 dxgi.lib)
 # The plugin body: loader, NGX observer, NR model, command guard, panel. Loaded by dxgi.dll's Start export.
-add_library(litedx12_runtime SHARED src/bootstrap.cpp src/runtime.cpp src/config_writer.cpp src/config_storage.cpp src/hooks.cpp src/graphics.cpp src/panel.cpp src/panel_gpu.cpp src/panel_ui.cpp src/ui_widgets.cpp src/input.cpp src/input_keyboard.cpp src/input_directinput.cpp src/nr/caller.cpp src/nr/model_runtime.cpp src/nr/model_settings.cpp src/nr/capture12.cpp src/nr/status.cpp src/nr/ngx_observer.cpp src/nr/command_guard.cpp)
+add_library(litedx12_runtime SHARED src/runtime.cpp src/config.cpp src/hooks.cpp src/graphics.cpp src/ui/panel.cpp src/ui/panel_gpu.cpp src/ui/panel_ui.cpp src/ui/ui_widgets.cpp src/input/input.cpp src/input/input_keyboard.cpp src/input/input_directinput.cpp src/nr/caller.cpp src/nr/model_runtime.cpp src/nr/model_settings.cpp src/nr/capture12.cpp src/nr/status.cpp src/nr/ngx_observer.cpp src/nr/command_guard.cpp)
 set_target_properties(litedx12_runtime PROPERTIES OUTPUT_NAME "nvngx.dll_litedx12")
 target_include_directories(litedx12_runtime PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(litedx12_runtime PRIVATE litedx12_frames detours imgui d3d11 d3d12 dxgi.lib user32 dwmapi dinput8 dxguid advapi32 version)
@@ -142,12 +142,12 @@ function(litedx12_proxy_stubs headerDir def resolver table)
 endfunction()
 
 # Thin DXGI proxy: the 15 system exports keep their real ordinals and are
-# forwarded by the generated stubs; the factory wrapper is the only C++ logic.
+# forwarded by the generated stubs; the body wraps factories through its own
+# detour of the system exports, so the proxy holds no C++ forwarding logic.
 set(LITEDX12_DXGI_GEN "${CMAKE_CURRENT_BINARY_DIR}/generated/proxy-dxgi")
 litedx12_proxy_stubs("${LITEDX12_DXGI_GEN}" "${CMAKE_CURRENT_SOURCE_DIR}/src/proxy/dxgi.def" ResolveDxgi DxgiTargets)
 add_library(dxgi SHARED src/proxy/proxy.cpp "${LITEDX12_DXGI_GEN}/proxy_stubs.generated.asm" src/proxy/dxgi.def)
 target_include_directories(dxgi PRIVATE "${LITEDX12_DXGI_GEN}")
-target_link_libraries(dxgi PRIVATE user32)
 add_dependencies(dxgi litedx12_runtime)
 target_compile_definitions(dxgi PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_compile_options(dxgi PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/W4> $<$<COMPILE_LANGUAGE:CXX>:/EHsc> $<$<COMPILE_LANGUAGE:CXX>:/utf-8>)

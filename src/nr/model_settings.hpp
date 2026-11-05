@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include "pass.hpp"
-namespace litedx12::nr {
-struct ModelSettings {bool enabled{};PassSettings pass;};
+namespace litedx12::nr
+{
+struct ModelSettings
+{
+    bool enabled{};
+    PassSettings pass;
+};
 void ConfigureModel(const wchar_t* ini);
 ModelSettings GetModelSettings();
-void SetModelSettings(const ModelSettings&,bool persist=true);
+void SetModelSettings(const ModelSettings&, bool persist = true);
 bool ModelRequested();
 bool ModelActive();
 bool ProcessingActive();
 void PublishPass(const PassStatus&);
-void ReportModelWait(const char* reason);
 // Verbose-only (Diagnostics.Level=2): exact NR skip accounting. No work at Level 0/1.
 PassStatus LastPass();
 UINT64 ModelRevision();

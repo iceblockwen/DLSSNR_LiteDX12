@@ -4,8 +4,10 @@
 #include <d3d12.h>
 #include <mutex>
 
-namespace litedx12 {
-struct GraphicsStatus {
+namespace litedx12
+{
+struct GraphicsStatus
+{
     State graphics = State::Waiting;
     State panel = State::Waiting;
     bool visible = false;
@@ -14,7 +16,6 @@ struct GraphicsStatus {
     wchar_t reason[256]{};
 };
 void AttachFactory(REFIID iid, void** output) noexcept;
-void GraphicsFailure(HRESULT error, const wchar_t* reason) noexcept;
 void Log(const wchar_t* message) noexcept;
 // graphics.cpp owns the panel registry; wrappers.hpp binds each swapchain through these.
 std::recursive_mutex& GraphicsMutex();

@@ -4,7 +4,7 @@
 namespace litedx12
 {
 // Native graphics internals and overlay probes must keep their factory identity.
-// Checked at creation/GetParent only, never on the per-frame Present path.
+// Checked at factory creation only, never on the per-frame Present path.
 inline bool NativeFactoryCaller(void* caller) noexcept
 {
     HMODULE module{};

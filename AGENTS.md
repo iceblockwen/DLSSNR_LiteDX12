@@ -21,7 +21,7 @@
 
 - 面板窗口标题、INI、日志、运行时 DLL 文件名统一使用 `DLSSNR_LiteDX12` / `nvngx.dll_litedx12.dll`。
 - 代理 `dxgi.dll` 只转发系统导出并加载主体，不持有图形／UI／模型对象。
-- 主体导出名 `Start`、`LiteAttachFactory` 是代理与主体之间的私有 ABI，可保留。
+- 主体导出名 `Start` 是代理与主体之间的私有 ABI，可保留。工厂由主体自己 detour 系统 `CreateDXGIFactory*` 包装，代理只转发。
 
 ## 代码风格
 

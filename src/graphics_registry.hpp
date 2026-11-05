@@ -4,12 +4,14 @@
 // lock, nothing else does.
 #pragma once
 #include "graphics.hpp"
-#include "panel.hpp"
+#include "ui/panel.hpp"
 #include <map>
 #include <memory>
 #include <mutex>
-namespace litedx12 {
-struct GraphicsRegistry {
+namespace litedx12
+{
+struct GraphicsRegistry
+{
     std::recursive_mutex mutex;
     std::map<IDXGISwapChain*, std::shared_ptr<Panel>> panels;
 };

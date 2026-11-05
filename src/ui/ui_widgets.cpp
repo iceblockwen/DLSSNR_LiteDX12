@@ -3,30 +3,42 @@
 #include <windows.h>
 #include <algorithm>
 #include <cstring>
-namespace litedx12::panel_ui {void ItemTip(const char *text) {
+namespace litedx12::panel_ui
+{
+void ItemTip(const char* text)
+{
     if (!ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    {
         return;
+    }
     ImGui::BeginTooltip();
     ImGui::PushTextWrapPos(ImGui::GetFontSize() * 32);
     ImGui::TextUnformatted(text);
     ImGui::PopTextWrapPos();
     ImGui::EndTooltip();
 }
-std::string Utf8(const std::wstring &value) {
+std::string Utf8(const std::wstring& value)
+{
     if (value.empty())
+    {
         return {};
+    }
     const auto size = WideCharToMultiByte(CP_UTF8, 0, value.data(), int(value.size()), nullptr, 0,
                                           nullptr, nullptr);
     std::string result(size, '\0');
     if (size)
+    {
         WideCharToMultiByte(CP_UTF8, 0, value.data(), int(value.size()), result.data(), size,
                             nullptr, nullptr);
+    }
     return result;
 }
-const char *SliderTip(const char *label) {
-    struct Tip {
-        const char *label;
-        const char *text;
+const char* SliderTip(const char* label)
+{
+    struct Tip
+    {
+        const char* label;
+        const char* text;
     };
     static const Tip tips[]{
         {"Scale",
@@ -57,14 +69,21 @@ const char *SliderTip(const char *label) {
          "Maximum measured-white fall rate, in powers of two per second. 1 allows down to half per second; 0 holds downward changes. Default: 0.5."},
         {"Measure every N frames",
          "Sampling interval in processed NR frames. Smaller values update measured white and exposure readback more often, with more sampling cost. Default: 4."}};
-    for (const auto &tip : tips)
+    for (const auto& tip : tips)
+    {
         if (strcmp(label, tip.label) == 0)
+        {
             return tip.text;
+        }
+    }
     return "";
 }
-void SliderHelp(const char *label, double low, double high) {
+void SliderHelp(const char* label, double low, double high)
+{
     if (!ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    {
         return;
+    }
     ImGui::BeginTooltip();
     ImGui::PushTextWrapPos(ImGui::GetFontSize() * 32);
     ImGui::TextUnformatted(SliderTip(label));
@@ -75,24 +94,30 @@ void SliderHelp(const char *label, double low, double high) {
     ImGui::PopTextWrapPos();
     ImGui::EndTooltip();
 }
-bool ResetValue(float &value, float initial) {
+bool ResetValue(float& value, float initial)
+{
     const bool clicked = ImGui::SmallButton("Reset");
-    if (ImGui::IsItemHovered()) {
+    if (ImGui::IsItemHovered())
+    {
         ImGui::SetTooltip("Restore default: %.9g", double(initial));
     }
     if (clicked)
+    {
         value = initial;
+    }
     return clicked;
 }
-void SliderResetWidth(const char *label) {
-    const auto &style = ImGui::GetStyle();
+void SliderResetWidth(const char* label)
+{
+    const auto& style = ImGui::GetStyle();
     const float reserved = ImGui::CalcTextSize(label).x + ImGui::CalcTextSize("Reset").x +
                            2 * style.FramePadding.x + 3 * style.ItemSpacing.x;
     ImGui::SetNextItemWidth((std::max)(60.f, ImGui::GetContentRegionAvail().x - reserved));
 }
-bool PanelSliderFloat(const char *label, float *value, float low, float high,
-                      const char *format, ImGuiSliderFlags flags,
-                      bool *finished) {
+bool PanelSliderFloat(const char* label, float* value, float low, float high,
+                      const char* format, ImGuiSliderFlags flags,
+                      bool* finished)
+{
     bool changed =
         ImGui::SliderFloat(label, value, low, high, format, flags | ImGuiSliderFlags_AlwaysClamp);
     bool done = ImGui::IsItemDeactivatedAfterEdit();
@@ -100,16 +125,20 @@ bool PanelSliderFloat(const char *label, float *value, float low, float high,
     ImGui::PushID(label);
     // Capture the parent window's storage before BeginPopup changes the current
     // window. The scoped ID keeps independent sliders and panels separate.
-    auto *storage = ImGui::GetStateStorage();
+    auto* storage = ImGui::GetStateStorage();
     const auto popupState = ImGui::GetID("##NumericPopupWasOpen");
     const bool wasOpen = storage->GetBool(popupState, false);
-    if (ImGui::BeginPopupContextItem("Numeric input")) {
+    if (ImGui::BeginPopupContextItem("Numeric input"))
+    {
         ImGui::TextUnformatted(label);
         ImGui::TextDisabled("Enter a value (%.9g to %.9g)", double(low), double(high));
         ImGui::SetNextItemWidth(200);
         if (ImGui::IsWindowAppearing())
+        {
             ImGui::SetKeyboardFocusHere();
-        if (ImGui::InputFloat("##Value", value, 0, 0, "%.9g")) {
+        }
+        if (ImGui::InputFloat("##Value", value, 0, 0, "%.9g"))
+        {
             *value = (std::clamp)(*value, low, high);
             changed = true;
         }
@@ -121,23 +150,32 @@ bool PanelSliderFloat(const char *label, float *value, float low, float high,
     const bool popupOpen = ImGui::IsPopupOpen("Numeric input");
     done |= wasOpen && !popupOpen;
     if (wasOpen != popupOpen)
+    {
         storage->SetBool(popupState, popupOpen);
+    }
     ImGui::PopID();
     if (finished)
+    {
         *finished = done;
+    }
     return changed;
 }
-bool PanelSliderInt(const char *label, int *value, int low, int high) {
+bool PanelSliderInt(const char* label, int* value, int low, int high)
+{
     bool changed = ImGui::SliderInt(label, value, low, high, "%d", ImGuiSliderFlags_AlwaysClamp);
     SliderHelp(label, low, high);
     ImGui::PushID(label);
-    if (ImGui::BeginPopupContextItem("Numeric input")) {
+    if (ImGui::BeginPopupContextItem("Numeric input"))
+    {
         ImGui::TextUnformatted(label);
         ImGui::TextDisabled("Enter a value (%d to %d)", low, high);
         ImGui::SetNextItemWidth(200);
         if (ImGui::IsWindowAppearing())
+        {
             ImGui::SetKeyboardFocusHere();
-        if (ImGui::InputInt("##Value", value, 0, 0)) {
+        }
+        if (ImGui::InputInt("##Value", value, 0, 0))
+        {
             *value = (std::clamp)(*value, low, high);
             changed = true;
         }

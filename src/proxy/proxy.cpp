@@ -1,110 +1,29 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Lite-style thin DXGI proxy. No graphics/UI/model ownership in this DLL.
-#include "factory_origin.hpp"
+// Thin DXGI proxy: forwards every system export unchanged and starts the body.
+// No graphics/UI/model ownership in this DLL; the body wraps factories through
+// its own detour of the system CreateDXGIFactory* exports.
 #include "proxy_common.hpp"
-#include "proxy_exports.generated.hpp"
-#include <intrin.h>
-#include <dxgi1_6.h>
-#include <mutex>
-#include <atomic>
+#include <unknwn.h>
 
 namespace
 {
-HMODULE ownModule{}, systemModule{};
-std::once_flag systemOnce;
-std::atomic<HMODULE> runtimeModule{};
-std::atomic<DWORD> startupError{};
-std::atomic<DWORD> systemLoadError{};
-
-const litedx12::proxy::Entry kEntry{&runtimeModule, &startupError, L"DLSSNR_LiteDX12",
-                                    L"DLSSNR_LiteDX12.ini", L"DLSSNR_LiteDX12.log", L"nvngx.dll_litedx12.dll",
-                                    L"system DXGI forwarding remains available."};
-
-std::atomic<FARPROC> originalFactories[3]{};
-
-void WrapFactory(REFIID iid, void** output)
-{
-    const auto module = runtimeModule.load();
-    if (!module)
-    {
-        return;
-    }
-
-    using Attach = BOOL(WINAPI*)(REFIID, void**);
-    if (const auto attach = reinterpret_cast<Attach>(GetProcAddress(module, "LiteAttachFactory")))
-    {
-        attach(iid, output);
-    }
-}
-
-HRESULT FactoryUnavailable(void** out)
-{
-    if (!out)
-    {
-        return E_POINTER;
-    }
-    *out = nullptr;
-    const auto error = systemLoadError.load();
-    return error ? HRESULT_FROM_WIN32(error) : E_NOTIMPL;
-}
-
-HRESULT WINAPI CreateFactory(REFIID iid, void** out)
-{
-    const bool internal = litedx12::NativeFactoryCaller(_ReturnAddress());
-    const auto native = originalFactories[0].load();
-    if (!native)
-    {
-        return FactoryUnavailable(out);
-    }
-
-    auto hr = reinterpret_cast<HRESULT(WINAPI*)(REFIID, void**)>(native)(iid, out);
-    if (SUCCEEDED(hr) && !internal)
-    {
-        WrapFactory(iid, out);
-    }
-    return hr;
-}
-
-HRESULT WINAPI CreateFactory1(REFIID iid, void** out)
-{
-    const bool internal = litedx12::NativeFactoryCaller(_ReturnAddress());
-    const auto native = originalFactories[1].load();
-    if (!native)
-    {
-        return FactoryUnavailable(out);
-    }
-
-    auto hr = reinterpret_cast<HRESULT(WINAPI*)(REFIID, void**)>(native)(iid, out);
-    if (SUCCEEDED(hr) && !internal)
-    {
-        WrapFactory(iid, out);
-    }
-    return hr;
-}
-
-HRESULT WINAPI CreateFactory2(UINT flags, REFIID iid, void** out)
-{
-    const bool internal = litedx12::NativeFactoryCaller(_ReturnAddress());
-    const auto native = originalFactories[2].load();
-    if (!native)
-    {
-        return FactoryUnavailable(out);
-    }
-
-    auto hr = reinterpret_cast<HRESULT(WINAPI*)(UINT, REFIID, void**)>(native)(flags, iid, out);
-    if (SUCCEEDED(hr) && !internal)
-    {
-        WrapFactory(iid, out);
-    }
-    return hr;
-}
-
+// Explicit values for a missing system DXGI, as in ReShade. A load failure
+// never publishes these, so the next call retries the load.
 HRESULT WINAPI Unavailable()
 {
     return E_NOTIMPL;
 }
 
-HRESULT WINAPI UnavailableDebug(UINT, REFIID, void** output)
+HRESULT WINAPI UnavailableObject(REFIID, void** output)
+{
+    if (output)
+    {
+        *output = nullptr;
+    }
+    return E_NOTIMPL;
+}
+
+HRESULT WINAPI UnavailableFlagsObject(UINT, REFIID, void** output)
 {
     if (output)
     {
@@ -123,17 +42,12 @@ BOOL WINAPI UnavailableValue(LPCSTR, UINT64*)
     return FALSE;
 }
 
-HRESULT WINAPI UnavailableDevice(HMODULE, IDXGIFactory*, IDXGIAdapter*, UINT, const void*, UINT, void**)
+HRESULT WINAPI UnavailableDevice(HMODULE, void*, void*, UINT, const void*, UINT, void**)
 {
     return E_NOTIMPL;
 }
 
-HRESULT WINAPI UnavailableLayered(IDXGIAdapter*, UINT, void*, REFIID, void**)
-{
-    return E_NOTIMPL;
-}
-
-HRESULT WINAPI UnavailableSize(const void*, UINT)
+HRESULT WINAPI UnavailableLayered(void*, UINT, void*, REFIID, void**)
 {
     return E_NOTIMPL;
 }
@@ -152,130 +66,47 @@ void WINAPI EtwRundown()
 {
 }
 
-DWORD WINAPI Boot(void*)
-{
-    return litedx12::proxy::BootRuntime(ownModule, kEntry);
-}
+// Indexed like src/proxy/dxgi.def.
+const FARPROC kFallbacks[]{
+    reinterpret_cast<FARPROC>(UnavailableObject),      // CreateDXGIFactory
+    reinterpret_cast<FARPROC>(UnavailableObject),      // CreateDXGIFactory1
+    reinterpret_cast<FARPROC>(UnavailableFlagsObject), // CreateDXGIFactory2
+    reinterpret_cast<FARPROC>(Unavailable),            // DXGIDeclareAdapterRemovalSupport
+    reinterpret_cast<FARPROC>(UnavailableFlagsObject), // DXGIGetDebugInterface1
+    reinterpret_cast<FARPROC>(UnavailableString),      // CompatString
+    reinterpret_cast<FARPROC>(UnavailableValue),       // CompatValue
+    reinterpret_cast<FARPROC>(UnavailableDevice),      // DXGID3D10CreateDevice
+    reinterpret_cast<FARPROC>(UnavailableLayered),     // DXGID3D10CreateLayeredDevice
+    reinterpret_cast<FARPROC>(UnavailableLayers),      // DXGID3D10GetLayeredDeviceSize
+    reinterpret_cast<FARPROC>(UnavailableLayers),      // DXGID3D10RegisterLayers
+    reinterpret_cast<FARPROC>(EtwRundown),             // DXGID3D10ETWRundown
+    reinterpret_cast<FARPROC>(UnavailablePointer),     // DXGIDumpJournal
+    reinterpret_cast<FARPROC>(UnavailablePointer),     // DXGIReportAdapterConfiguration
+    reinterpret_cast<FARPROC>(Unavailable),            // DXGIDisableVBlankVirtualization
+};
+static_assert(sizeof(kFallbacks) / sizeof(kFallbacks[0]) == kProxyExportCount,
+              "fallback table must cover every export declared in dxgi.def");
 }
 
 extern "C"
 {
-alignas(8) FARPROC DxgiTargets[kProxyExportCount]{};
+    alignas(8) FARPROC DxgiTargets[kProxyExportCount]{};
 
-FARPROC ResolveDxgi(unsigned index)
-{
-    // call_once leaves the flag unset when the body throws, so a failed load is
-    // retried by the next caller. The DWORD carries the reason out to the export.
-    DWORD error = ERROR_SUCCESS;
-    try
+    FARPROC ResolveDxgi(unsigned index)
     {
-        std::call_once(systemOnce, []
-        {
-            wchar_t path[MAX_PATH]{};
-            if (!GetSystemDirectoryW(path, MAX_PATH))
-            {
-                throw DWORD(GetLastError());
-            }
-            if (wcscat_s(path, L"\\dxgi.dll"))
-            {
-                throw DWORD(ERROR_INSUFFICIENT_BUFFER);
-            }
-
-            const auto module = LoadLibraryExW(path, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
-            if (!module)
-            {
-                throw DWORD(GetLastError());
-            }
-            if (module == ownModule)
-            {
-                throw DWORD(ERROR_INVALID_HANDLE);
-            }
-            systemModule = module;
-
-            for (unsigned i = 0; i < kProxyExportCount; ++i)
-            {
-                auto fn = GetProcAddress(module, kProxyExportNames[i]);
-                if (i < 3)
-                {
-                    originalFactories[i] = fn;
-                    const FARPROC wrappers[] = {reinterpret_cast<FARPROC>(CreateFactory),
-                                                reinterpret_cast<FARPROC>(CreateFactory1),
-                                                reinterpret_cast<FARPROC>(CreateFactory2)};
-                    if (fn)
-                    {
-                        fn = wrappers[i];
-                    }
-                }
-                InterlockedExchangePointer(reinterpret_cast<PVOID volatile*>(&DxgiTargets[i]),
-                                          reinterpret_cast<PVOID>(fn));
-            }
-        });
+        const auto target = litedx12::proxy::Resolve(DxgiTargets, index, []
+                                                     {
+                                                         return litedx12::proxy::LoadSystem(L"dxgi.dll");
+                                                     });
+        return target ? target : kFallbacks[index];
     }
-    catch (DWORD code)
-    {
-        error = code;
-    }
-    catch (...)
-    {
-        error = ERROR_GEN_FAILURE;
-    }
-
-    systemLoadError = error;
-
-    const auto target = index < kProxyExportCount ? DxgiTargets[index] : nullptr;
-    if (target)
-    {
-        return target;
-    }
-
-    // Known signatures use the same explicit fallback values as ReShade. Failed
-    // loading never publishes these pointers, so the next call retries initialization.
-    const FARPROC fallback[] = {reinterpret_cast<FARPROC>(CreateFactory),
-                                reinterpret_cast<FARPROC>(CreateFactory1),
-                                reinterpret_cast<FARPROC>(CreateFactory2),
-                                reinterpret_cast<FARPROC>(Unavailable),
-                                reinterpret_cast<FARPROC>(UnavailableDebug),
-                                reinterpret_cast<FARPROC>(UnavailableString),
-                                reinterpret_cast<FARPROC>(UnavailableValue),
-                                reinterpret_cast<FARPROC>(UnavailableDevice),
-                                reinterpret_cast<FARPROC>(UnavailableLayered),
-                                reinterpret_cast<FARPROC>(UnavailableSize),
-                                reinterpret_cast<FARPROC>(UnavailableLayers),
-                                reinterpret_cast<FARPROC>(EtwRundown),
-                                reinterpret_cast<FARPROC>(UnavailablePointer),
-                                reinterpret_cast<FARPROC>(UnavailablePointer),
-                                reinterpret_cast<FARPROC>(Unavailable)};
-    static_assert(sizeof(fallback) / sizeof(fallback[0]) == kProxyExportCount,
-                  "fallback table must cover every export declared in dxgi.def");
-    if (index < kProxyExportCount)
-    {
-        return fallback[index];
-    }
-    RaiseFailFastException(nullptr, nullptr, 0);
-    return nullptr;
-}
 }
 
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, LPVOID)
 {
     if (reason == DLL_PROCESS_ATTACH)
     {
-        ownModule = module;
-
-        HMODULE pinned{};
-        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
-                           reinterpret_cast<LPCWSTR>(&DllMain), &pinned);
-
-        // Like Lite: dispatch, never join a worker under loader lock. Static CRT/TLS keeps thread notifications.
-        const auto thread = CreateThread(nullptr, 0, Boot, nullptr, 0, nullptr);
-        if (thread)
-        {
-            CloseHandle(thread);
-        }
-        else
-        {
-            startupError = GetLastError();
-        }
+        litedx12::proxy::Attach(module);
     }
     return TRUE;
 }

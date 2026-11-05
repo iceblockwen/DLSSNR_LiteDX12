@@ -7,11 +7,16 @@
 #pragma once
 #include "frame_input.hpp"
 #include "status.hpp"
-namespace litedx12::nr {
+namespace litedx12::nr
+{
 // State recorded for one observed frame: the resources the recording may still
 // reference, the fence that proves it finished, and the model's own keep-alive.
-struct Captured12 {
+struct Captured12
+{
     ComPtr<ID3D12Device> device;
+    // The list this recording belongs to. Holding it keeps the address meaningful
+    // for the pointer comparison in PrepareSubmission/Submitted.
+    ComPtr<ID3D12GraphicsCommandList> list;
     PassFrame frame;
     std::array<ComPtr<ID3D12Resource>, 3> borrowed;
     ComPtr<ID3D12Fence> fence;
@@ -24,8 +29,16 @@ struct Captured12 {
     ComPtr<ID3D12Resource> exposureCopy;
     D3D12_RESOURCE_DESC exposureDesc{};
     D3D12_RESOURCE_STATES exposureCopyState{}, recordedExposureState{};
+    // Game resources this recording borrowed. Dropping them is safe only once the
+    // owning fence completed, so the model recording stays separate.
+    void ClearBorrowed()
+    {
+        borrowed = {};
+        borrowedExposure.Reset();
+    }
 };
-struct GameDlssStatus {
+struct GameDlssStatus
+{
     bool observed{}, released{};
     unsigned result{};
     UINT64 lastEvaluation{};
@@ -48,7 +61,7 @@ void ReleaseDevice12(ID3D12Device*);
 ComPtr<ID3D12Resource> PreviewImage12(ID3D12Device*);
 FARPROC ResolveNgx(HMODULE, LPCSTR, FARPROC);
 }
-namespace litedx12 {
+namespace litedx12
+{
 void InstallFrameQueueCapture(ID3D12CommandQueue*);
-void InstallFrameListCapture(ID3D12GraphicsCommandList*);
 }

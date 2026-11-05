@@ -7,10 +7,18 @@
 #include <wrl/client.h>
 #include <algorithm>
 #include <cmath>
-namespace litedx12::nr {
+namespace litedx12::nr
+{
 using Microsoft::WRL::ComPtr;
-inline void ThrowIfFailed(HRESULT hr) { if (FAILED(hr)) throw hr; }
-inline float Clamped(float v, float lo, float hi, float fallback) {
+inline void ThrowIfFailed(HRESULT hr)
+{
+    if (FAILED(hr))
+    {
+        throw hr;
+    }
+}
+inline float Clamped(float v, float lo, float hi, float fallback)
+{
     return std::isfinite(v) ? std::clamp(v, lo, hi) : fallback;
 }
 // The typed view a typeless/special format must be seen through. `depth` picks the
@@ -22,4 +30,9 @@ DXGI_FORMAT StorageFormat(DXGI_FORMAT format);
 bool ShaderViewCompatible(DXGI_FORMAT format, bool depth = false);
 void Transition(ID3D12GraphicsCommandList*, ID3D12Resource*, D3D12_RESOURCE_STATES,
                 D3D12_RESOURCE_STATES);
+// The layout every Lite compute shader uses: one descriptor table over `ranges`
+// and, when `constantWords` is not zero, one 32-bit constant block at b0.
+void ComputePipeline(ID3D12Device*, const D3D12_DESCRIPTOR_RANGE* ranges, unsigned rangeCount,
+                     unsigned constantWords, const void* bytecode, size_t bytecodeSize,
+                     ID3D12RootSignature** root, ID3D12PipelineState** pipeline);
 }

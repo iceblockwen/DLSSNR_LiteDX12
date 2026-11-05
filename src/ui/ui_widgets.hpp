@@ -4,7 +4,8 @@
 #pragma once
 #include <imgui.h>
 #include <string>
-namespace litedx12::panel_ui {
+namespace litedx12::panel_ui
+{
 void ItemTip(const char* text);
 std::string Utf8(const std::wstring& value);
 void SliderHelp(const char* label, double low, double high);

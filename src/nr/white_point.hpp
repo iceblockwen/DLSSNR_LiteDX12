@@ -3,60 +3,85 @@
 #include "frame_input.hpp"
 #include <span>
 #include <vector>
-namespace litedx12::nr {
-enum class WhiteMode : unsigned {Game,Measured,Manual};
-enum class WhiteSource : unsigned {Manual,Display,Game,Measured,Waiting,Held};
-struct WhiteSettings {
-    WhiteMode mode=WhiteMode::Game;
-    bool reverseRatio{},useTexture=true;
-    bool usePreExposure=true,useExposureScale=true;
-    float manual=1,trim=1,anchor=.18f,tau=.3f,deadband=.08f,attack=1,release=.5f;
+namespace litedx12::nr
+{
+enum class WhiteMode : unsigned
+{
+    Game,
+    Measured,
+    Manual
+};
+enum class WhiteSource : unsigned
+{
+    Manual,
+    Display,
+    Game,
+    Measured,
+    Waiting,
+    Held
+};
+struct WhiteSettings
+{
+    WhiteMode mode = WhiteMode::Game;
+    bool reverseRatio{}, useTexture = true;
+    bool usePreExposure = true, useExposureScale = true;
+    float manual = 1, trim = 1, anchor = .18f, tau = .3f, deadband = .08f, attack = 1, release = .5f;
     // Exponent applied to the live game exposure ratio: white = (pre/exposure)^exponent * trim,
     // or (exposure/pre)^exponent * trim when reverseRatio is set. Only the fraction swaps.
     // 1 keeps the plain linear mapping; below 1 compresses the exposure range so one trim
     // covers both day and night, above 1 expands it.
-    float exponent=1;
-    unsigned every=4;
+    float exponent = 1;
+    unsigned every = 4;
 };
-struct WhiteStatus {
-    WhiteSource source=WhiteSource::Waiting;
+struct WhiteStatus
+{
+    WhiteSource source = WhiteSource::Waiting;
     bool valid{};
     bool statisticsValid{};
-    float value=1,target=1,logAverage{},mean{},p50{},p90{},p99{},peak{};
+    float value = 1, target = 1, logAverage{}, mean{}, p50{}, p90{}, p99{}, peak{};
 };
 // Extracted Lite ConsumeMeter / ResolveWhitePoint / FilterWhite mechanisms.
 // Per-stream state; never meter the model's edited output.
-class WhitePoint {
-public:
+class WhitePoint
+{
+  public:
     void Consume(std::span<const float> grid);
-    WhiteStatus Resolve(const WhiteSettings&,const Exposure&,float dt,bool reset=false);
+    WhiteStatus Resolve(const WhiteSettings&, const Exposure&, float dt, bool reset = false);
     void Reset();
-private:
+
+  private:
     WhiteStatus status;
-    bool started{},measured{};
-    WhiteMode mode=WhiteMode::Game;
-    WhiteSource previous=WhiteSource::Waiting;
+    bool started{}, measured{};
+    WhiteMode mode = WhiteMode::Game;
+    WhiteSource previous = WhiteSource::Waiting;
 };
-struct WhiteReadback {
+struct WhiteReadback
+{
     ComPtr<ID3D12RootSignature> root;
     ComPtr<ID3D12PipelineState> pipeline;
-    ComPtr<ID3D12Resource> source,grid,readback;
+    ComPtr<ID3D12Resource> source, grid, readback;
     ComPtr<ID3D12Resource> exposure;
     bool hasExposure{};
     ComPtr<ID3D12DescriptorHeap> heap;
     // Commit the last submitted ending state before replacing its ticket. A discarded
     // recording cannot undo an older submission's COPY_SOURCE state.
     std::shared_ptr<GpuTicket> ticket;
-    D3D12_RESOURCE_STATES committedState=D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    D3D12_RESOURCE_STATES committedState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     // Caller may consume only after the fence covering this recording is complete.
-    HRESULT Consume(WhitePoint&,float* gameExposure=nullptr) const;
-    void RetireInputs(){source.Reset();exposure.Reset();} // same completion contract as Consume
+    HRESULT Consume(WhitePoint&, float* gameExposure = nullptr) const;
+    void RetireInputs()
+    {
+        source.Reset();
+        exposure.Reset();
+    } // same completion contract as Consume
 };
-class WhiteMeter12 {
-public:
+class WhiteMeter12
+{
+  public:
     explicit WhiteMeter12(ID3D12Device*);
-    HRESULT Record(ID3D12GraphicsCommandList*,ID3D12Resource* uneditedSource,std::shared_ptr<WhiteReadback>&,ID3D12Resource* exposure,const std::shared_ptr<GpuTicket>& ticket);
-private:
+    HRESULT Record(ID3D12GraphicsCommandList*, ID3D12Resource* uneditedSource, std::shared_ptr<WhiteReadback>&, ID3D12Resource* exposure, const std::shared_ptr<GpuTicket>& ticket);
+
+  private:
     ComPtr<ID3D12Device> device;
     ComPtr<ID3D12RootSignature> root;
     ComPtr<ID3D12PipelineState> pipeline;

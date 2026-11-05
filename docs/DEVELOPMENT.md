@@ -30,7 +30,7 @@ Windows x64 的 **Direct3D 12 only** DLSS Neural Rendering 插件（个人使用
 
 | 层 | 内容 | 唯一的公开契约 |
 | --- | --- | --- |
-| L0 宿主 | `dxgi.dll` 转发系统导出、启动主体 | 无（只有 `Start` / `LiteAttachFactory` 两个私有导出） |
+| L0 宿主 | `dxgi.dll` 转发系统导出、启动主体 | 无（只有 `Start` 一个私有导出） |
 | L1 基础 | 日志、INI 读写与后台写、`GraphicsStatus`、Detours 事务模板、GPU 票据 | `runtime` / `config` / `graphics` / `detour` / `GpuTicket` |
 | L2 接入 | 唯一的 Detours 安装点；Factory / Swapchain 纯转发包装 | 谁被钩、怎么钩 |
 | L3 观察 | `GetProcAddress` 打桩，截获游戏自己的 NGX SR evaluate | **`FrameInput`（只有它跨层）** |
@@ -42,21 +42,26 @@ Windows x64 的 **Direct3D 12 only** DLSS Neural Rendering 插件（个人使用
 ```
 src/            宿主 + 基础 + 接入
   proxy/（dxgi 代理 proxy.cpp + dxgi.def，替代入口 proxy_forward.cpp + version/winmm.def，
-         factory_origin.hpp 供代理与 hooks 共用；跳板与导出名表由 .def 在 configure 时生成）
-  bootstrap.*（主体入口，由代理的 Boot 线程加载）
-  runtime.* graphics.hpp graphics.cpp（交换链侧：registry + 面板出入口）
-  config_writer.*（异步去抖写） config_storage.*（INI 落在哪）
+         共用 proxy_common.hpp；跳板与导出名表由 .def 在 configure 时生成）
+  factory_origin.hpp（hooks 判断工厂调用者是否为系统模块）
+  runtime.*（主体入口 Start + 初始化 / 日志 / 开关，由代理的 Boot 线程加载）
+  graphics.hpp graphics.cpp graphics_registry.hpp（交换链侧：registry + 面板出入口）
+  config.*（INI 落在哪 + 异步去抖写）
   detour_hook.hpp retry_once.hpp
   hooks.cpp wrappers.hpp
+src/ui/         L5 表现层：面板与控件
+  panel.*（壳 + 生命周期） panel_impl.hpp（Panel::Impl 状态）
+  panel_gpu.cpp（D3D12 渲染） panel_ui.cpp（ImGui 窗口） ui_widgets.*（无状态控件）
+  window_subclass.hpp（窗口子类化登记表）
+src/input/      L5 表现层：输入拦截（不做绘制，全是 Win32 / DirectInput 钩子）
+  input.*（消息 / 光标 / 原始输入） input_keyboard.*（归属状态机） input_directinput.cpp
+  menu_hotkey.hpp
 src/nr/         观察 + 管线
   ngx_observer.*（观察游戏自己的 NGX 调用） frame_input.* d3d12_util.*
   capture12.*（帧账本 + 采集，共一份内部状态） command_guard.*
   pass.* model_runtime.* model_settings.* gpu_ticket.hpp
   ngx_*.hpp guide_contract.hpp contracts.hpp
   white_point.* preview.* shaders/（三个 .hlsl，configure 时编成 CSO 内嵌）
-src/（表现层，尚未建 panel/ 目录）
-  panel.*（壳 + 生命周期 + 输入） panel_impl.hpp（Panel::Impl 状态）
-  panel_gpu.cpp（D3D12 渲染） panel_ui.cpp（ImGui 窗口） ui_widgets.*（无状态控件）
 ```
 
 ## 文件映射（现 → 目标）
@@ -74,7 +79,8 @@ src/（表现层，尚未建 panel/ 目录）
 | `nr/pass.*` | 保持 `nr/pass.*`（在 `nr/` 内再加 `nr_` 前缀是冗余）；白点 → `nr/white_point.*`；调试视图 → `nr/preview.*` | 拆（剩 pass.cpp 自身的白点/调试视图部分） |
 | `src/panel.cpp` 的 `GraphicsSnapshot` / `GraphicsFailure` / swapchain 绑定 | `src/graphics.cpp` + `src/graphics_registry.hpp` | ✅ 已搬（P1-4，109 行：registry + 5 个入口 + 状态发布） |
 | `src/panel.cpp` 的 widget 层（tooltip / 滑条 / 数值弹窗 / Reset） | `src/ui_widgets.{hpp,cpp}`（`lite::panel_ui`） | ✅ 已搬（P1-5，150 行逐行搬移并做了哈希校验） |
-| `src/config_writer.*` + `config_storage.*` | — | ❌ 不做：两者是分层（“INI 在哪” vs “何时/多频繁去写”），合并等于让一个文件背两个职责 |
+| `src/config_writer.*` + `config_storage.*` | `src/config.*` | ✅ 已合（2026-11-05 改判：两者共 280 行、只有一条调用链，分文件只增加跳转；文件内用分节注释保持"INI 在哪" / "何时写"两层） |
+| `src/bootstrap.*` | `src/runtime.*` | ✅ 已合（2026-11-05：`Start` 只有 30 行，且只调用 runtime 的初始化） |
 | `src/panel.cpp`（1543） | `panel_impl.hpp` + `panel_ui.cpp` + `panel_gpu.cpp` | ✅ 已拆：`panel.cpp` 壳/生命周期/窗口、`panel_gpu.cpp`（`Wait`/`Drain`/`DestroyRenderer`/`InitRenderer`/`Draw12`）、`panel_ui.cpp`（`BuildResourceUi`/`BuildPipelineStatus`/`BuildUi`）；16 个方法体搬完后逐个 SHA256 比对，0 差异 |
 | `LITE_TEST_HOOKS`(34 处) / 截图 / 测试导出 | — | ✅ 已删（宏从未被定义，全是死码） |
 | 幂等快照的 `size`/`version`、`ArchitectureStatus` 及其 hook 标志 | — | ✅ 已删（只被测试导出读，写完无人读） |
@@ -111,7 +117,7 @@ src/（表现层，尚未建 panel/ 目录）
 - 重构进行中：见"文件映射"表的动作列。**每步只做纯搬移 / 改名，完成后必须编译通过**；游戏不跑。
 - 进度（全部完成，每步都编译通过、`/W4` 零警告）：P1-1 `diagnostics.*` → `capture12.*` + `status.*`；P1-2 `frame.hpp` → `frame_input.hpp` + `d3d12_util.*` + `preview.hpp`；P1-3 改名 `ngx_observer.cpp`/`command_guard.*`；死码清扫（`LITE_TEST_HOOKS` 34 处、测试导出、`WriteBmp`/截图、`ArchitectureStatus`、快照 `size`/`version`、`DebugOutput()`、空 `idle`、重复的 `retainedBuffers`、空壳 `TabFlags`，共 −308 行）；P1-4 `graphics.cpp` + `graphics_registry.hpp`；P1-5 `ui_widgets.*`；P1-6 面板三拆（`panel_impl.hpp` + `panel_ui.cpp` + `panel_gpu.cpp`）；P1-7 `namespace litedx12`；P2-1 fxc 预编译 CSO。
 - 搬移的做法（请照做）：**定位行范围 → 逐行原样搬 → 对搬走的块 SHA256 前后比对 → 再编译**。面板拆分后 16 个方法体逐个比对，0 差异；`ui_widgets.cpp` 的 150 行也做过同样校验。不要手抄搬移代码，也不要用脚本解析 `Panel::Impl` 这种方法体/成员交错的块——PowerShell 大小写不敏感的变量名（`$m` 碰掉 `$M`、`$l` 碰掉 `$L`）已经坑过一次。
-- 不做（有理由，写在映射表里）：拆 `capture12.*`、合并 `config_*`、48 轮转描述符 heap。
+- 不做（有理由，写在映射表里）：拆 `capture12.*`、48 轮转描述符 heap。
 - 下一步候选（需你点头）：`preview.cpp` 的 `Preview12` 每次开面板会建 2 个描述符 + 一条 PSO（只在开启时一次）；`input.cpp` 是最后一处手写的 `DetourTransactionBegin` 链；`pass.cpp` 914 行仍可再分（白点交互、计时读回）。
 - 每次动完都要复核 `dist/Release` 的三个文件哈希；**部署要等你发话**（GTA 里现在是 `A46E176B9119` / `903A9499BD51` / `AC87313E79E0`）。
 - P2 待定（需用户确认）：shader 预编译、轮转 heap 描述符、`panel` 深度拆分。
