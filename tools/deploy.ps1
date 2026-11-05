@@ -50,6 +50,7 @@ $games = [ordered]@{
     coldwar = 'G:\XboxGames\Call of Duty- Black Ops Cold War\Content'
     pbz = 'F:\SteamLibrary\steamapps\common\PBZ\platform\steam'
     gow = 'F:\SteamLibrary\steamapps\common\God of War Ragnarok'
+    hfw = 'G:\EpicGames\HorizonForbiddenWestCE'
 }
 $files = @('dxgi.dll', 'nvngx.dll_litedx12.dll')   # always overwritten
 $iniName = 'DLSSNR_LiteDX12.ini'                   # written only when the folder has none
