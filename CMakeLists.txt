@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.24)
 # Keep configure-time dependency detection and every later MSVC invocation in
 # the same language, including builds started outside Build.ps1.
 set(ENV{VSLANG} 1033)
-project(DLSSNR_LiteDX12 VERSION 0.1.0 LANGUAGES C CXX ASM_MASM)
+project(DLSSNR_LiteDX12 VERSION 1.0 LANGUAGES C CXX ASM_MASM)
 if(NOT WIN32 OR NOT MSVC OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   message(FATAL_ERROR "Windows x64 with MSVC required")
 endif()
