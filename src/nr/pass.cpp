@@ -140,6 +140,7 @@ struct Context
     unsigned w{}, h{};
     PassSettings tuning;
     DXGI_FORMAT format{};
+    bool encoded = true; // colour goes through the HDR proxy instead of the game texture
     ComPtr<ID3D12Resource> proxy, answer, output;
     ComPtr<ID3D12Resource> guides[2];
     std::shared_ptr<Layer> layer;
@@ -438,6 +439,11 @@ struct PassExecutor12::Impl
         }
         const auto& color = frame.resourceMetadata[0].description;
         const auto format = ViewFormat(color.Format);
+        // An SDR 8-bit input is copied into the HDR proxy unchanged, so the model can read
+        // the game texture directly. The raw format is checked, not the shader view.
+        const bool encoded = exposure.sceneLinear ||
+                             (color.Format != DXGI_FORMAT_R8G8B8A8_UNORM &&
+                              color.Format != DXGI_FORMAT_B8G8R8A8_UNORM);
         auto* resolveTarget = frame.resolveTarget.Get();
         if (resolveTarget)
         {
@@ -675,7 +681,7 @@ struct PassExecutor12::Impl
             status.white.value = status.white.target = 1; // SDR bypass actually normalizes by one
         }
         if (!context || context->w != color.Width || context->h != color.Height ||
-            context->format != format)
+            context->format != format || context->encoded != encoded)
         {
             D3D12_FEATURE_DATA_FORMAT_SUPPORT support{format};
             ThrowIfFailed(device->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &support,
@@ -688,6 +694,7 @@ struct PassExecutor12::Impl
             context->w = unsigned(color.Width);
             context->h = color.Height;
             context->format = format;
+            context->encoded = encoded;
             context->tuning = settings;
             // A style/strength change does not change the input exposure domain.
             // Preserve its measured white instead of alternating fallback and measurement.
@@ -755,9 +762,10 @@ struct PassExecutor12::Impl
             params.SetUnsigned("VisibilityNodeMask", 1u);
             if (!ctx->layer)
             {
-                // Only creation reads these; the evaluation path below sets the map again, so the
-                // steady-state frame does not repeat them.
+                // Only creation reads these: a tuning change drops the layer above, so the
+                // next frame comes back here and rewrites them.
                 Tuning(params, settings);
+                // Nothing is bound as DLSSNR.ControlMask: the model derives its own application mask.
                 params.SetResource("DLSSNR.ControlMask", nullptr);
             }
         }
@@ -795,9 +803,12 @@ struct PassExecutor12::Impl
         }
         recording->root = root;
         recording->pipeline = pipeline;
-        if (!ctx->proxy)
+        if (!ctx->answer)
         {
-            ctx->proxy = Texture(device.Get(), ctx->w, ctx->h, DXGI_FORMAT_R16G16B16A16_FLOAT);
+            if (ctx->encoded)
+            {
+                ctx->proxy = Texture(device.Get(), ctx->w, ctx->h, DXGI_FORMAT_R16G16B16A16_FLOAT);
+            }
             ctx->answer = Texture(device.Get(), ctx->w, ctx->h, DXGI_FORMAT_R16G16B16A16_FLOAT);
             // The output format was validated for UAV typed stores when this context was created.
             if (!resolveTarget)
@@ -1047,14 +1058,17 @@ struct PassExecutor12::Impl
                 status.reason = "White meter unavailable; manual/history fallback";
             }
         }
-        run(0, c);
-        // One barrier call covers the guide conversions finishing and the proxy
-        // becoming readable for the model.
-        pending.Add(ctx->proxy.Get(), UAV, SRV);
+        if (ctx->encoded)
+        {
+            run(0, c);
+            // One barrier call covers the guide conversions finishing and the proxy
+            // becoming readable for the model.
+            pending.Add(ctx->proxy.Get(), UAV, SRV);
+        }
         pending.Flush();
-        // One feature evaluates the immutable encoded input exactly once.
+        // One feature evaluates the immutable input exactly once.
         bool evaluatedOk{};
-        ID3D12Resource* input = ctx->proxy.Get();
+        ID3D12Resource* input = ctx->encoded ? ctx->proxy.Get() : result;
         // Non-null once the model produced an answer; the tail barrier keys off it.
         ID3D12Resource* final{};
         if (status.readyPasses)
@@ -1064,11 +1078,8 @@ struct PassExecutor12::Impl
             {
                 // One lock for the whole parameter group; Evaluate below takes its own.
                 ModelRuntime::Batch params(backend);
-                // Nothing is bound as DLSSNR.ControlMask: the model derives its own application mask.
                 params.SetResource("DLSSNR.Color", input);
                 params.SetResource("DLSSNR.Output", answer);
-                params.SetResource("DLSSNR.ControlMask", nullptr);
-                Tuning(params, settings);
                 params.SetUnsigned("DLSSNR.Reset", layer->first ? 1u : 0u);
                 params.SetResource("DLSSNR.Depth", guides[0]);
                 params.SetResource("DLSSNR.MVec", guides[1]);
@@ -1153,7 +1164,10 @@ struct PassExecutor12::Impl
         }
         // Both buffers return to UAV for the next recording, in the same call as the
         // resolve output above.
-        tail.Add(ctx->proxy.Get(), SRV, UAV);
+        if (ctx->encoded)
+        {
+            tail.Add(ctx->proxy.Get(), SRV, UAV);
+        }
         if (final)
         {
             tail.Add(ctx->answer.Get(), SRV, UAV);

@@ -29,7 +29,6 @@ const std::wstring& PluginFolder();
 // Lock-free hot-path queries.
 bool Enabled();
 bool Usable();
-bool SkipSmallSwapchains();
 bool DirectResolve();
 // Diagnostics.ForceTiming: run the GPU timing path with the panel closed. Panel checkbox, off by
 // default. Costs four timestamps and one query resolve per frame while enabled; the timestamp

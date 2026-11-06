@@ -112,7 +112,7 @@ src/nr/         观察 + 管线
 
 ## 当前状态与未完成
 
-- GTA V Enhanced 已验证可进入并正常运行（关键：`SkipSmallSwapchains=1`，辅助小链不包装）。
+- GTA V Enhanced 已验证可进入并正常运行（关键：辅助小链一律不包装，与 DX11 一致）。
 - NR 本身尚未在游戏里开过（`Enabled=0`）。
 - 重构进行中：见"文件映射"表的动作列。**每步只做纯搬移 / 改名，完成后必须编译通过**；游戏不跑。
 - 进度（全部完成，每步都编译通过、`/W4` 零警告）：P1-1 `diagnostics.*` → `capture12.*` + `status.*`；P1-2 `frame.hpp` → `frame_input.hpp` + `d3d12_util.*` + `preview.hpp`；P1-3 改名 `ngx_observer.cpp`/`command_guard.*`；死码清扫（`LITE_TEST_HOOKS` 34 处、测试导出、`WriteBmp`/截图、`ArchitectureStatus`、快照 `size`/`version`、`DebugOutput()`、空 `idle`、重复的 `retainedBuffers`、空壳 `TabFlags`，共 −308 行）；P1-4 `graphics.cpp` + `graphics_registry.hpp`；P1-5 `ui_widgets.*`；P1-6 面板三拆（`panel_impl.hpp` + `panel_ui.cpp` + `panel_gpu.cpp`）；P1-7 `namespace litedx12`；P2-1 fxc 预编译 CSO。

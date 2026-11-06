@@ -780,7 +780,7 @@ DX11 存在同一处隐患：`wrappers.hpp` 里的 `Factory` 包装类和 `Attac
 
 目前只部署到 `alanwake2` 并验证。其余 20 个 DX12 目标与 4 个 DX11 目标仍是旧主体（含工厂对象替换），等待决定。该目录的 OptiScaler `dxgi.dll` 已改名 `dxgi.dll_optiscaler` 保留，未删除。
 
-阿兰维克 2 配置：`Enabled=1`、`Level=0`、`SkipSmallSwapchains=1`、`RequireComputeSignature=0`（Remedy 引擎在 NGX evaluate 的命令列表上不绑计算根签名，与 dsdc / wdlegion / msfs2024 / fh6 / starfield 同类）、NR 开启。
+阿兰维克 2 配置：`Enabled=1`、`Level=0`、`RequireComputeSignature=0`（Remedy 引擎在 NGX evaluate 的命令列表上不绑计算根签名，与 dsdc / wdlegion / msfs2024 / fh6 / starfield 同类）、NR 开启。
 
 # 最新部署：2026-10-25 死代码清理后的全量部署（HDR 目标按变体分发）
 
@@ -1085,7 +1085,7 @@ NR 运行时找两个 NVIDIA 文件，缺一个就跑不起来：
 
 ## 每个目标要一起记的信息
 
-- 用什么启动不再影响兼容分支；`SkipSmallSwapchains` / `DirectResolve` 等开关完全由 INI 决定。
+- 用什么启动不再影响兼容分支；`DirectResolve` 等开关完全由 INI 决定（小于 100 px 的交换链已改为一律不包装，不再有开关）。
 - 鼠标/面板是不是 raw-only（日志第一行会写）；
 - 有没有别的注入器（RTSS、Steam Overlay、ReShade）——影响 `Present` 路径和光标归属；
 - 备份目录名，方便回滚。

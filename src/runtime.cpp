@@ -22,7 +22,6 @@ namespace
 std::wstring pluginFolder;
 std::atomic<bool> enabled{true}, usable{true}, logging{true};
 std::atomic<unsigned> detail{1};
-std::atomic<bool> skipSmallSwapchains{};
 std::atomic<bool> directResolve{};
 // Diagnostics.ForceTiming: run the GPU timing path even with the panel closed. The panel's
 // checkbox writes this; it defaults to off.
@@ -112,7 +111,6 @@ void Initialize(HMODULE plugin)
     // Compatibility policies are INI-driven; no executable-name checks.
     directResolve = GetPrivateProfileIntW(L"Diagnostics", L"DirectResolve", 0, ini.c_str()) != 0;
     forceTiming = GetPrivateProfileIntW(L"Diagnostics", L"ForceTiming", 0, ini.c_str()) != 0;
-    skipSmallSwapchains = GetPrivateProfileIntW(L"Diagnostics", L"SkipSmallSwapchains", 0, ini.c_str()) != 0;
     requireComputeSignature = GetPrivateProfileIntW(L"Diagnostics", L"RequireComputeSignature", 1, ini.c_str()) != 0;
     nr::ConfigureModel(ini.c_str());
     nr::SetDepthContrast(GetPrivateProfileIntW(L"Diagnostics", L"DepthContrast", 0, ini.c_str()) != 0, false);
@@ -136,10 +134,6 @@ bool Enabled()
 bool Usable()
 {
     return usable.load(std::memory_order_relaxed);
-}
-bool SkipSmallSwapchains()
-{
-    return skipSmallSwapchains.load(std::memory_order_relaxed);
 }
 bool DirectResolve()
 {

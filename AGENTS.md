@@ -13,7 +13,7 @@
 
 - 仅 DX12：DXGI Factory／SwapChain 包装（面板与队列捕获）、Loader 监测、NGX D3D12 捕获、命令列表绑定快照／恢复、NR Pass 与合成 shader、ImGui 面板。
 - 已删除：DX11 原生捕获、DX11→DX12 桥接、光流估计、深度查找、独立跑分与测试入口。
-- 兼容策略由 INI 显式开启并在启动时缓存：`SkipSmallSwapchains`（小于 100 的交换链不包装）、`DirectResolve`（复制三种输入并把结果直接写回捕获颜色 UAV）。不要按进程名判断游戏，也不要把 `DirectResolve` 推广到颜色不是 UAV 的游戏。
+- 兼容策略由 INI 控制并在启动时缓存：`DirectResolve`（默认 0，复制三种输入并把结果直接写回捕获颜色 UAV）。`SkipSmallSwapchains` 已移除：请求/实际宽或高小于 100 的交换链一律不包装（GTA V Enhanced 的 180x44 辅助链），与 DX11 一致。不要按进程名判断游戏，也不要把 `DirectResolve` 推广到颜色不是 UAV 的游戏。
 - 正常面板计时、按需求曝光读回、资源预览属于产品功能；临时采样/图片导出/成功路径监测不得进入正式构建。历史诊断证据统一归档 diagnostics。
 - NR 输入只来自游戏自身的 NGX SR／RR evaluate（feature 1／13），覆盖普通与 `_C` 评估入口。
 

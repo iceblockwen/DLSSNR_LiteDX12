@@ -460,10 +460,6 @@ HRESULT ForwardPresent(IDXGISwapChain4* native, ID3D12CommandQueue* queue, UINT 
 }
 void ResolveSwapchainRequest(HWND window, UINT& width, UINT& height) noexcept
 {
-    if (!litedx12::SkipSmallSwapchains())
-    {
-        return;
-    }
     RECT client{};
     if (window && (!width || !height) && GetClientRect(window, &client))
     {
@@ -489,7 +485,7 @@ void WrapSwapchainObject(IUnknown* device, IDXGISwapChain** output, UINT request
     {
         return;
     }
-    if (litedx12::SkipSmallSwapchains() && ((requestedWidth && requestedWidth < 100) || (requestedHeight && requestedHeight < 100)))
+    if ((requestedWidth && requestedWidth < 100) || (requestedHeight && requestedHeight < 100))
     {
         // Decide from the creation request, before touching the returned native
         // object. HWND automatic sizes are resolved before native creation too.
@@ -510,20 +506,17 @@ void WrapSwapchainObject(IUnknown* device, IDXGISwapChain** output, UINT request
         {
             return;
         }
-        if (litedx12::SkipSmallSwapchains())
+        DXGI_SWAP_CHAIN_DESC desc{};
+        HRESULT hr;
         {
-            DXGI_SWAP_CHAIN_DESC desc{};
-            HRESULT hr;
-            {
-                NativeFactoryScope internal;
-                hr = (*output)->GetDesc(&desc);
-            }
-            // GTA creates an auxiliary small chain (180x44); wrapping it breaks the game.
-            // Use resolved native dimensions, so zero-sized requests for the main window are kept.
-            if (SUCCEEDED(hr) && (desc.BufferDesc.Width < 100 || desc.BufferDesc.Height < 100))
-            {
-                return;
-            }
+            NativeFactoryScope internal;
+            hr = (*output)->GetDesc(&desc);
+        }
+        // GTA creates an auxiliary small chain (180x44); wrapping it breaks the game.
+        // Use resolved native dimensions, so zero-sized requests for the main window are kept.
+        if (SUCCEEDED(hr) && (desc.BufferDesc.Width < 100 || desc.BufferDesc.Height < 100))
+        {
+            return;
         }
         ComPtr<IDXGISwapChain4> native;
         if (FAILED((*output)->QueryInterface(IID_PPV_ARGS(&native))))

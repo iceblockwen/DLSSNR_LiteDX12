@@ -4,7 +4,8 @@ RWTexture2D<float4> target : register(u0);
 cbuffer Settings : register(b0) {
  uint mode, ox, oy, sw;
  uint sh, ow, oh, flags;
- float sx, sy, gain, pad;
+ float sx, sy, gain;
+ uint tileX;
 };
 [numthreads(8,8,1)] void Main(uint3 id:SV_DispatchThreadID) {
  if(id.x>=ow || id.y>=oh) return;
@@ -22,5 +23,5 @@ cbuffer Settings : register(b0) {
   result=float4(saturate(mv*0.5+0.5),0.5,1);
  } else result=float4(saturate(v.rgb*gain),1);
  if(!all(isfinite(v))) result=float4(1,0,1,1);
- target[id.xy]=result;
+ target[uint2(id.x+tileX, id.y)]=result;
 }

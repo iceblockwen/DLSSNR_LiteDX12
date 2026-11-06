@@ -13,7 +13,7 @@ Preview12::Preview12(ID3D12Device* d)
                                      {D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0, 0, 1}};
     ComputePipeline(device.Get(), ranges, 2, 12, litePreviewShader, litePreviewShaderSize,
                     root.ReleaseAndGetAddressOf(), pipeline.ReleaseAndGetAddressOf());
-    D3D12_DESCRIPTOR_HEAP_DESC h{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 2, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
+    D3D12_DESCRIPTOR_HEAP_DESC h{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 6, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
     ThrowIfFailed(device->CreateDescriptorHeap(&h, IID_PPV_ARGS(&heap)));
 }
 HRESULT Preview12::Record(ID3D12GraphicsCommandList* list, const PassFrame& frame)
@@ -54,7 +54,7 @@ HRESULT Preview12::Record(ID3D12GraphicsCommandList* list, const PassFrame& fram
             return hr;
         }
     }
-    Transition(list, image.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+    Transition(list, image.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     HRESULT error = S_OK;
     for (unsigned n = 0; n < 3; ++n)
     {
@@ -64,31 +64,17 @@ HRESULT Preview12::Record(ID3D12GraphicsCommandList* list, const PassFrame& fram
         {
             continue;
         }
-        if (!tiles[n])
-        {
-            tiles[n] = std::make_unique<Preview12>(device.Get());
-        }
         // Depth is shown at its own scale; colour and motion follow the panel's.
-        const auto hr = tiles[n]->RecordTile(list, frame, n, w, h,
-                                             n != 2 ? 1.f : frame.guides.displayScale);
+        const auto hr = RecordTile(list, frame, n, w, h, n != 2 ? 1.f : frame.guides.displayScale);
         if (FAILED(hr))
         {
             error = hr;
-            continue;
         }
-        auto* tile = tiles[n]->image.Get();
-        Transition(list, tile, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
-        D3D12_TEXTURE_COPY_LOCATION from{}, to{};
-        from.pResource = tile;
-        to.pResource = image.Get();
-        from.Type = to.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-        list->CopyTextureRegion(&to, w * n, 0, 0, &from, nullptr);
-        Transition(list, tile, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     }
-    Transition(list, image.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    Transition(list, image.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     return error;
 }
-// One tile: colour (0), depth (1) or motion vectors (2), scaled to the caller's extents.
+// One tile: colour (0), depth (1) or motion vectors (2), written into its own atlas subrect.
 HRESULT Preview12::RecordTile(ID3D12GraphicsCommandList* list, const PassFrame& frame, unsigned input,
                               unsigned outputWidth, unsigned outputHeight, float displayScale)
 {
@@ -126,25 +112,10 @@ HRESULT Preview12::RecordTile(ID3D12GraphicsCommandList* list, const PassFrame& 
         return E_INVALIDARG;
     }
     const unsigned ow = outputWidth ? outputWidth : sw, oh = outputHeight ? outputHeight : sh;
-    if (!image || image->GetDesc().Width != ow || image->GetDesc().Height != oh)
-    {
-        auto out = desc;
-        out.Alignment = 0;
-        out.Width = ow;
-        out.Height = oh;
-        out.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        out.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
-        out.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-        D3D12_HEAP_PROPERTIES properties{};
-        properties.Type = D3D12_HEAP_TYPE_DEFAULT;
-        auto hr = device->CreateCommittedResource(&properties, D3D12_HEAP_FLAG_NONE, &out,
-                                                  D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&image));
-        if (FAILED(hr))
-        {
-            return hr;
-        }
-    }
+    // Each tile owns one (SRV, UAV) pair in the atlas-wide heap.
     auto cpu = heap->GetCPUDescriptorHandleForHeapStart();
+    const auto stride = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    cpu.ptr += uint64_t(2 * input) * stride;
     D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
     srv.Format = ViewFormat(desc.Format, input == 1);
     if (input == 2 && srv.Format != DXGI_FORMAT_R16G16_FLOAT && srv.Format != DXGI_FORMAT_R32G32_FLOAT &&
@@ -167,7 +138,7 @@ HRESULT Preview12::RecordTile(ID3D12GraphicsCommandList* list, const PassFrame& 
         return E_NOTIMPL;
     }
     device->CreateShaderResourceView(source, &srv, cpu);
-    cpu.ptr += device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    cpu.ptr += stride;
     D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
     uav.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     uav.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
@@ -175,19 +146,20 @@ HRESULT Preview12::RecordTile(ID3D12GraphicsCommandList* list, const PassFrame& 
     struct Constants
     {
         unsigned mode, ox, oy, sw, sh, ow, oh, flags;
-        float sx, sy, gain, pad;
+        float sx, sy, gain;
+        unsigned tileX;
     };
     const Constants c{input + 1u, g.originX[input], g.originY[input], sw, sh, ow, oh,
-                      (g.depthInverted ? 1u : 0u) | (g.flipDepth ? 2u : 0u) | (g.depthContrast ? 4u : 0u), g.motionScaleX, g.motionScaleY, displayScale, 0.f};
-    Transition(list, image.Get(), D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                      (g.depthInverted ? 1u : 0u) | (g.flipDepth ? 2u : 0u) | (g.depthContrast ? 4u : 0u), g.motionScaleX, g.motionScaleY, displayScale, ow * input};
     auto* h = heap.Get();
     list->SetDescriptorHeaps(1, &h);
     list->SetPipelineState(pipeline.Get());
     list->SetComputeRootSignature(root.Get());
-    list->SetComputeRootDescriptorTable(0, heap->GetGPUDescriptorHandleForHeapStart());
+    auto table = heap->GetGPUDescriptorHandleForHeapStart();
+    table.ptr += uint64_t(2 * input) * stride;
+    list->SetComputeRootDescriptorTable(0, table);
     list->SetComputeRoot32BitConstants(1, 12, &c, 0);
     list->Dispatch((ow + 7) / 8, (oh + 7) / 8, 1);
-    Transition(list, image.Get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     return S_OK;
 }
 }
