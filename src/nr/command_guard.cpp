@@ -930,22 +930,25 @@ void InstallCommandState(ID3D12GraphicsCommandList* list)
     {
         return;
     }
-    // One list class per device in practice: the installed vtable entries are
-    // remembered so a per-evaluate call skips the QueryInterface, the install
-    // lock and the linear Installed scan. A stale key only costs a reinstall.
-    static std::atomic<void*> lastDevice{}, lastList{};
+    // A list class is identified by its vtable pointer, never by the address of one of its
+    // methods: DIRECT, COMPUTE, BUNDLE and COPY lists all share a single Reset implementation,
+    // so a method address makes every later class look like the one already installed and
+    // silently skips all of its hooks (SetComputeRootSignature included).
+    static std::atomic<void*> lastDeviceVtable{}, lastListVtable{};
     ComPtr<ID3D12Device> device;
-    if (SUCCEEDED(list->GetDevice(IID_PPV_ARGS(&device))))
+    if (SUCCEEDED(list->GetDevice(IID_PPV_ARGS(&device))) && device)
     {
-        const auto target = litedx12::detour::Method(device.Get(), 41);
-        if (lastDevice.load(std::memory_order_acquire) != target)
+        const auto vtable = *reinterpret_cast<void***>(device.Get());
+        if (lastDeviceVtable.load(std::memory_order_acquire) != vtable)
         {
             InstallDeviceCommandState(device.Get());
-            lastDevice.store(target, std::memory_order_release);
+            lastDeviceVtable.store(vtable, std::memory_order_release);
         }
     }
-    const auto reset = litedx12::detour::Method(list, 10);
-    if (lastList.load(std::memory_order_acquire) == reset)
+    const auto listVtable = *reinterpret_cast<void***>(list);
+    // Keep the cheap skip, but never skip a class whose hooks are not actually installed.
+    if (lastListVtable.load(std::memory_order_acquire) == listVtable &&
+        HH::Installed(litedx12::detour::Method(list, 28)))
     {
         return;
     }
@@ -955,7 +958,7 @@ void InstallCommandState(ID3D12GraphicsCommandList* list)
     if (HH::Installed(litedx12::detour::Method(list, 28)) &&
         (!extended || HP1::Installed(litedx12::detour::Method(extended.Get(), 75))))
     {
-        lastList.store(reset, std::memory_order_release);
+        lastListVtable.store(listVtable, std::memory_order_release);
         return;
     }
     litedx12::detour::Transaction<&Finish> transaction;
@@ -975,7 +978,7 @@ void InstallCommandState(ID3D12GraphicsCommandList* list)
         Stage<HEnd>(extended.Get(), 69);
     }
     transaction.Commit();
-    lastList.store(reset, std::memory_order_release);
+    lastListVtable.store(listVtable, std::memory_order_release);
 }
 // Tracking is suspended for the whole recording, so the list's shadow state is
 // still exactly what the game left behind: the scope keeps the list only.
