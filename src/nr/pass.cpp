@@ -66,6 +66,14 @@ ComPtr<ID3D12Resource> Texture(ID3D12Device* d, unsigned w, unsigned h, DXGI_FOR
                                              IID_PPV_ARGS(&r)));
     return r;
 }
+// The re-typed motion-vector twin keeps the game's own precision: turning a 32-bit vector pair
+// into half would quantise it, and Opt re-types within the same family for the same reason.
+DXGI_FORMAT MotionFormat(DXGI_FORMAT f)
+{
+    return f == DXGI_FORMAT_R32G32_TYPELESS || f == DXGI_FORMAT_R32G32_FLOAT
+               ? DXGI_FORMAT_R32G32_FLOAT
+               : DXGI_FORMAT_R16G16_FLOAT;
+}
 // A model feature whose recording may still be in flight is parked rather than released:
 // freeing one under work the game's own queue still references removes the device. OptiScaler
 // parks for a fixed 32 evaluates because it has no fence to ask. Tickets cover a
@@ -926,7 +934,7 @@ struct PassExecutor12::Impl
         for (unsigned n = 0; n < 2; ++n)
         {
             auto d = resourceDescription(guides[n]);
-            const auto expected = n ? DXGI_FORMAT_R16G16_FLOAT : DXGI_FORMAT_R32_FLOAT;
+            const auto expected = n ? MotionFormat(d.Format) : DXGI_FORMAT_R32_FLOAT;
             // The model builds its own views from the resource descriptor, so only a guide that is
             // already typed exactly this way can be handed over: a typeless member of the same
             // family has to be re-typed first, even though a shader view of it would be valid.
