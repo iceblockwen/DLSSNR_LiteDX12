@@ -328,7 +328,6 @@ HRESULT Capture12(ID3D12GraphicsCommandList* commands, const FrameInput& origina
     try
     {
         auto input = original;
-        input.guides.flipDepth = input.guides.flipDepth != DepthFlip();
         for (unsigned n = 0; n < 3; ++n)
         {
             if (!input.resources[n])

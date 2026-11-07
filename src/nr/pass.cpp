@@ -74,6 +74,23 @@ DXGI_FORMAT MotionFormat(DXGI_FORMAT f)
                ? DXGI_FORMAT_R32G32_FLOAT
                : DXGI_FORMAT_R16G16_FLOAT;
 }
+// Depth is re-typed only where the model cannot read the descriptor as it stands. A 16-bit guide
+// stays 16-bit: widening it to R32_FLOAT doubles the per-frame write and invents no precision.
+// The stencil families still land on R32_FLOAT, because an X8X24 twin is twice as wide as the
+// depth anyone reads.
+DXGI_FORMAT DepthFormat(DXGI_FORMAT f)
+{
+    switch (f)
+    {
+        case DXGI_FORMAT_R32_TYPELESS:
+            return DXGI_FORMAT_R32_FLOAT;
+        case DXGI_FORMAT_R16_TYPELESS:
+        case DXGI_FORMAT_R16_UNORM:
+            return DXGI_FORMAT_R16_UNORM;
+        default:
+            return DXGI_FORMAT_R32_FLOAT;
+    }
+}
 // A model feature whose recording may still be in flight is parked rather than released:
 // freeing one under work the game's own queue still references removes the device. OptiScaler
 // parks for a fixed 32 evaluates because it has no fence to ask. Tickets cover a
@@ -334,7 +351,7 @@ struct PassExecutor12::Impl
                                          {D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 0, 0, 4}};
         // Bytecode is built by fxc at build time (CMakeLists): the render thread
         // never parses shader source.
-        ComputePipeline(device.Get(), ranges, 2, 16, liteColorShader, liteColorShaderSize,
+        ComputePipeline(device.Get(), ranges, 2, 12, liteColorShader, liteColorShaderSize,
                         root.ReleaseAndGetAddressOf(), pipeline.ReleaseAndGetAddressOf());
     }
     HRESULT Record(ID3D12GraphicsCommandList* list, const PassFrame& frame, const Exposure& exposure,
@@ -473,15 +490,14 @@ struct PassExecutor12::Impl
         }
         status.hasInput = true;
         status.inputTime = GetTickCount64();
-        status.depthFlipped = frame.guides.flipDepth;
         status.motionScaleX = frame.guides.motionScaleX;
         status.motionScaleY = frame.guides.motionScaleY;
         // These are the adapters required by this input. A skipped frame's
         // state/reason remains visible separately; it is not a successful run.
-        status.inputConverted[1] =
-            frame.resourceMetadata[1].description.Format != DXGI_FORMAT_R32_FLOAT;
-        status.inputConverted[2] =
-            frame.resourceMetadata[2].description.Format != DXGI_FORMAT_R16G16_FLOAT;
+        const auto& depthFormat = frame.resourceMetadata[1].description.Format;
+        const auto& motionFormat = frame.resourceMetadata[2].description.Format;
+        status.inputConverted[1] = DepthFormat(depthFormat) != depthFormat;
+        status.inputConverted[2] = MotionFormat(motionFormat) != motionFormat;
         status.sceneLinear = exposure.sceneLinear;
         status.preExposure = exposure.pre;
         status.exposureScale = exposure.scale;
@@ -877,7 +893,6 @@ struct PassExecutor12::Impl
             unsigned mode, w, h, display;
             float white, preMul;
             unsigned live;
-            unsigned guideX, guideY, guideW, guideH;
             float gain;
             unsigned composed;
             float exponent, trim;
@@ -922,7 +937,7 @@ struct PassExecutor12::Impl
             auto gpu = heap->GetGPUDescriptorHandleForHeapStart();
             gpu.ptr += UINT64(offset) * stride;
             list->SetComputeRootDescriptorTable(0, gpu);
-            list->SetComputeRoot32BitConstants(1, 16, &constants, 0);
+            list->SetComputeRoot32BitConstants(1, 12, &constants, 0);
             list->Dispatch((constants.w + 7) / 8, (constants.h + 7) / 8, 1);
         };
         ID3D12Resource* guides[2]{frame.resources[1].Get(), frame.resources[2].Get()};
@@ -933,11 +948,11 @@ struct PassExecutor12::Impl
         for (unsigned n = 0; n < 2; ++n)
         {
             auto d = resourceDescription(guides[n]);
-            const auto expected = n ? MotionFormat(d.Format) : DXGI_FORMAT_R32_FLOAT;
+            const auto expected = n ? MotionFormat(d.Format) : DepthFormat(d.Format);
             // The model builds its own views from the resource descriptor, so only a guide that is
             // already typed exactly this way can be handed over: a typeless member of the same
             // family has to be re-typed first, even though a shader view of it would be valid.
-            if (d.Format == expected && !(n == 0 && frame.guides.flipDepth))
+            if (d.Format == expected)
             {
                 continue;
             }
@@ -967,13 +982,6 @@ struct PassExecutor12::Impl
             guideConstants.mode = 2;
             guideConstants.w = unsigned(d.Width);
             guideConstants.h = d.Height;
-            guideConstants.display = n == 0 && frame.guides.flipDepth;
-            guideConstants.guideX = frame.guides.originX[n + 1];
-            guideConstants.guideY = frame.guides.originY[n + 1];
-            guideConstants.guideW =
-                frame.guides.width[n + 1] ? frame.guides.width[n + 1] : unsigned(d.Width);
-            guideConstants.guideH =
-                frame.guides.height[n + 1] ? frame.guides.height[n + 1] : d.Height;
             run(table, guideConstants);
             pending.Add(twin.Get(), UAV, SRV);
             guides[n] = twin.Get();

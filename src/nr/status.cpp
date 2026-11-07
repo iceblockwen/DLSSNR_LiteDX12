@@ -23,7 +23,6 @@ StatusRegistry& Global()
 std::atomic<bool> previewSelected{};
 std::atomic<bool> panelVisible{};
 std::atomic<bool> depthContrast{false};
-std::atomic<bool> depthFlip{false};
 std::atomic<float> gain{1};
 void Save(const wchar_t* key, const wchar_t* value, const wchar_t* section = L"Diagnostics")
 {
@@ -82,18 +81,6 @@ void SetDepthContrast(bool value, bool persist)
     if (persist)
     {
         Save(L"DepthContrast", value ? L"1" : L"0");
-    }
-}
-bool DepthFlip()
-{
-    return depthFlip.load();
-}
-void SetDepthFlip(bool value, bool persist)
-{
-    depthFlip = value;
-    if (persist)
-    {
-        Save(L"DepthUpsideDown", value ? L"1" : L"0", L"Resources");
     }
 }
 void SetPreviewSelected(bool value)

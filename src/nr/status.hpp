@@ -27,8 +27,6 @@ float DisplayScale();
 void SetDisplayScale(float, bool persist = true);
 bool DepthContrast();
 void SetDepthContrast(bool, bool persist = true);
-bool DepthFlip();
-void SetDepthFlip(bool, bool persist = true);
 PreviewStatus PreviewSnapshot();
 // Shared with the capture driver: one status block, one lock, one panel registry.
 namespace detail

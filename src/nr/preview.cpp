@@ -150,7 +150,7 @@ HRESULT Preview12::RecordTile(ID3D12GraphicsCommandList* list, const PassFrame& 
         unsigned tileX;
     };
     const Constants c{input + 1u, g.originX[input], g.originY[input], sw, sh, ow, oh,
-                      (g.depthInverted ? 1u : 0u) | (g.flipDepth ? 2u : 0u) | (g.depthContrast ? 4u : 0u), g.motionScaleX, g.motionScaleY, displayScale, ow * input};
+                      (g.depthInverted ? 1u : 0u) | (g.depthContrast ? 4u : 0u), g.motionScaleX, g.motionScaleY, displayScale, ow * input};
     auto* h = heap.Get();
     list->SetDescriptorHeaps(1, &h);
     list->SetPipelineState(pipeline.Get());

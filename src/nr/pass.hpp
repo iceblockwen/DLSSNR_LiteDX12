@@ -36,7 +36,7 @@ struct PassStatus
     bool gpuExposureValid{}, gpuDivisorValid{};
     float gpuExposure{}, gpuDivisor = 1;
     UINT64 inputTime{};
-    bool depthFlipped{}, inputConverted[3]{};
+    bool inputConverted[3]{};
     float motionScaleX = 1, motionScaleY = 1;
     const char* reason = "Waiting for NR input";
 };

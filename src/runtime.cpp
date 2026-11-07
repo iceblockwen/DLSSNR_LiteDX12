@@ -114,7 +114,6 @@ void Initialize(HMODULE plugin)
     requireComputeSignature = GetPrivateProfileIntW(L"Diagnostics", L"RequireComputeSignature", 1, ini.c_str()) != 0;
     nr::ConfigureModel(ini.c_str());
     nr::SetDepthContrast(GetPrivateProfileIntW(L"Diagnostics", L"DepthContrast", 0, ini.c_str()) != 0, false);
-    nr::SetDepthFlip(GetPrivateProfileIntW(L"Resources", L"DepthUpsideDown", 0, ini.c_str()) != 0, false);
     wchar_t previewScale[32]{};
     GetPrivateProfileStringW(L"Diagnostics", L"ResourceScale", L"1", previewScale, 32, ini.c_str());
     nr::SetDisplayScale(static_cast<float>(_wtof(previewScale)), false);

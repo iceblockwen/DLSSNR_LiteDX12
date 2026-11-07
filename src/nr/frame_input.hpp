@@ -16,7 +16,7 @@ struct Guides
 {
     float motionScaleX = 1, motionScaleY = 1;
     float displayScale = 1;
-    bool depthInverted{}, flipDepth{}, depthContrast{}; // depthContrast affects preview only
+    bool depthInverted{}, depthContrast{}; // depthContrast affects preview only
     bool motionResolutionKnown = true;                  // explicit inputs know their encoding; NGX needs create flags
     unsigned originX[3]{}, originY[3]{}, width[3]{}, height[3]{};
 };

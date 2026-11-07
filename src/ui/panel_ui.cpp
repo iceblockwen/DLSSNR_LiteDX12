@@ -61,13 +61,6 @@ void Panel::Impl::BuildResourceUi(float scale)
             }
             if (n == 1)
             {
-                bool flipped = nr::DepthFlip();
-                if (ImGui::Checkbox("Flip depth vertically", &flipped))
-                {
-                    nr::SetDepthFlip(flipped);
-                }
-                ItemTip(
-                    "Flip depth for the preview and the NR guide. Enable if the game's depth is upside down. Default: off.");
                 bool contrast = nr::DepthContrast();
                 if (ImGui::Checkbox("Depth contrast", &contrast))
                 {
@@ -172,9 +165,8 @@ void Panel::Impl::BuildPipelineStatus(const nr::ModelSettings& settings, const n
     ImGui::TextWrapped("Last NR color: game post-DLSS output%s",
                        pass.sceneLinear ? " + white normalization / encoding"
                                         : " (display domain; non-HDR bypass: no exposure/encoding)");
-    ImGui::TextWrapped("Depth: game native%s%s",
-                       pass.inputConverted[1] ? " + format conversion" : "",
-                       pass.depthFlipped ? " + vertical flip" : "");
+    ImGui::TextWrapped("Depth: game native%s",
+                       pass.inputConverted[1] ? " + format conversion" : "");
     ImGui::PushStyleColor(ImGuiCol_Text, green);
     ImGui::TextWrapped("MV: game native%s | scale %.5g, %.5g",
                        pass.inputConverted[2] ? " + format conversion" : "",
