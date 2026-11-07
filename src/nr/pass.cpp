@@ -567,7 +567,6 @@ struct PassExecutor12::Impl
             ++whiteEpoch;
             status.gpuExposureValid = status.gpuDivisorValid = false;
         }
-        white.Resolve(settings.white, exposure, 0);
         auto retire = [&](const std::shared_ptr<Recording>& completed)
         {
             if (settings.gpuTiming && completed->context == context && context &&
