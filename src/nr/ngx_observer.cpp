@@ -65,8 +65,6 @@ Guides Describe(const Parameters* p, const Metadata& m, ID3D12Resource* const* r
     g.motionScaleX = Read<float>(p, "MV.Scale.X", 1);
     g.motionScaleY = Read<float>(p, "MV.Scale.Y", 1);
     g.depthInverted = m.flagsKnown && (m.flags & 8) != 0;
-    g.originX[0] = Read<unsigned>(p, "DLSS.Output.Subrect.Base.X");
-    g.originY[0] = Read<unsigned>(p, "DLSS.Output.Subrect.Base.Y");
     g.originX[1] = Read<unsigned>(p, "DLSS.Input.Depth.Subrect.Base.X");
     g.originY[1] = Read<unsigned>(p, "DLSS.Input.Depth.Subrect.Base.Y");
     g.originX[2] = Read<unsigned>(p, "DLSS.Input.MV.Subrect.Base.X");
