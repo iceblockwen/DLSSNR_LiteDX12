@@ -74,10 +74,11 @@ DXGI_FORMAT MotionFormat(DXGI_FORMAT f)
                ? DXGI_FORMAT_R32G32_FLOAT
                : DXGI_FORMAT_R16G16_FLOAT;
 }
-// Depth is re-typed only where the model cannot read the descriptor as it stands. A 16-bit guide
-// stays 16-bit: widening it to R32_FLOAT doubles the per-frame write and invents no precision.
-// The stencil families still land on R32_FLOAT, because an X8X24 twin is twice as wide as the
-// depth anyone reads.
+// Depth is re-typed only where the model cannot read the descriptor as it stands. Every format
+// this returns unchanged is typed and already in the accepted depth list, so it needs no twin at
+// all: a 16-bit guide stays 16-bit and a float guide stays float. Widening either to R32_FLOAT
+// doubles the per-frame write and invents no precision. The stencil families still land on
+// R32_FLOAT, because an X8X24 twin is twice as wide as the depth anyone reads.
 DXGI_FORMAT DepthFormat(DXGI_FORMAT f)
 {
     switch (f)
@@ -87,6 +88,8 @@ DXGI_FORMAT DepthFormat(DXGI_FORMAT f)
         case DXGI_FORMAT_R16_TYPELESS:
         case DXGI_FORMAT_R16_UNORM:
             return DXGI_FORMAT_R16_UNORM;
+        case DXGI_FORMAT_R16_FLOAT:
+            return DXGI_FORMAT_R16_FLOAT;
         default:
             return DXGI_FORMAT_R32_FLOAT;
     }
