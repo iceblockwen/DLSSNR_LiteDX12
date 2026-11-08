@@ -1,3 +1,40 @@
+# 2026-11-08 重置统一入口与漂移/闪烁诊断；冷战签名开关实测通过
+
+## 冷战：`RequireComputeSignature=1` 可用，不是「不绑定」那一类
+
+此前把它改成 `=1` 时观察到一次崩溃，无法复现。本日实测（`695c6f7`，`Level=1`）：
+
+```
+NR history reset (1 so far): output size, format or colour domain changed
+NR history reset (2 so far): first evaluation of a new feature
+NR editing again (1 so far): NR evaluated successfully; resolve recorded
+NR history reset (3 so far): the game asked for one
+```
+
+4 行、无异常：feature 创建成功、NR 正常出图、全程没有一次 `stopped editing`。如果被签名保护拦住，日志会出现 `stopped editing: DX12 waiting for a captured compute root signature`，所以**冷战的 NGX evaluate 命令列表会绑定计算根签名**，与 `fh6`／`starfield`／`msfs2024`／`dsdc`／`wdlegion` 那五个确认从不绑定、必须 `=0` 的目标不同类。冷战的 `=1` 予以保留。
+
+那次崩溃因此不能归因于该开关，也没有在流水线里留下痕迹（日志最后一行是正常的游戏重置，不是崩溃现场）。
+
+## `Level=1` 新增 6 类诊断（`Level=0` 无输出）
+
+重置点此前是 8 处各写各的：有的直接置 `layer->first`，有的销毁 Context/Layer，两处走 `InvalidateHistory()` 且不带说明。反复命中时日志里看不出来，只能靠「画面好像糊了」去猜。现在统一为 `RestartTemporal(why)`（置位 + 记录）与 `NoteReset(why)`（只记录），计数器在 `Impl`，节流为**前 3 次 + 每 100 次**。
+
+| 日志 | 回答什么问题 |
+|---|---|
+| `NR history reset (N so far): <原因>` | 时域累积被丢弃的**频率和原因**。原因覆盖：游戏要求、输出尺寸/格式/色彩域变化、模型调优变化、新 feature 首帧、上一份录制无法定序、录制被丢弃、游戏释放自己的 feature、复用 spare executor |
+| `NR editing again / stopped editing (N so far): <reason>` | **画面在「模型答案」与「未编辑原图」之间交替**——这是闪烁最直接的成因。RAII 挂在 `Record` 出口，`refuse()` 的 8 个拒绝点、所有 `S_FALSE` 等待、模型/评估失败全部覆盖 |
+| `NR white source A -> B, value … target …` | 白点来源切换（Waiting／Held／Game／Measured／Manual／Display）。Measured 模式下在「测量」与「保持」间反复横跳就是亮度脉动 |
+| `NR white jumped X -> Y` | 相邻两帧白点比值超出 `[0.667, 1.5]`，亮度泵动的直接特征 |
+| `NR white input took/lost the game exposure texture` | 代理在「用曝光纹理算白点」与「标量回落」之间切换，两者不相等，游戏停止供应纹理时亮度跳一次（ref 记录过 GTA V 一局内掉三次）。同时监控 `Pre.Exposure` 有无 |
+| `NR white measurement failed 0x…` | GPU 回读失败会回落 `manual` 白点 |
+
+明确不处理的：`gpuExposure`／`gpuDivisor` 只进面板，不影响画面；`composed`／`differenceGain`／白点滑条不进 `SameTuning`，改了立刻生效，属于用户主动操作。
+
+**已知盲区**：模型内部时域累积的缓慢漂移无法从外部观测。这套日志的价值是排除法——六类都没触发时，说明问题不在我们能控制的状态里。
+
+## 部署
+
+`695c6f7`，`nvngx.dll_litedx12.dll` 1,093,120 B，24 个 DX12 目标全部部署并逐项校验一致。`Level=1` 暂时只在 `mhwilds`、`onimusha`、`coldwar` 三个目录开启，其余保持 0。
 # 2026-11-05 新增 Verbose 诊断（严格只在 `Level=2` 生效）
 
 新增 6 类日志，**全部**是 `Detail::Verbose`，且在会做实际工作的地方（取 QPC、构造 `std::string`、加锁）前面另有一道 `VerboseLogging()` / `VerboseEnabled()` 提前返回。`Level=0/1` 时这些代码连函数体都不进，开销是一次 relaxed 原子读（仅在 layer 创建、context 重建、历史失效这些低频点）。
