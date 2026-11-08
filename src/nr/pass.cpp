@@ -318,9 +318,29 @@ struct PassExecutor12::Impl
     UINT64 whiteEpoch{};
     bool initialized{}, attempted{};
     HRESULT initializationError = S_OK;
+    unsigned long long resets{};
     explicit Impl(ID3D12Device* d, ModelRuntime& b)
         : device(d), backend(b)
     {
+    }
+    // One name per temporal restart, so a reset loop reads as a repeating reason in the log
+    // instead of an unexplained soft picture. Level 1, throttled the way OptiScaler's own
+    // reset log is: first three then every hundredth, so a per-frame reset cannot flood it.
+    void NoteReset(const wchar_t* why)
+    {
+        ++resets;
+        if (resets <= 3 || resets % 100 == 0)
+        {
+            LogFormat(Detail::Basic, L"NR history reset (%llu so far): %s", resets, why);
+        }
+    }
+    void RestartTemporal(const wchar_t* why)
+    {
+        if (context && context->layer)
+        {
+            context->layer->first = true;
+        }
+        NoteReset(why);
     }
     std::shared_ptr<TimingResources> AcquireTiming()
     {
@@ -544,6 +564,7 @@ struct PassExecutor12::Impl
                 context.reset();
                 white.Reset();
                 ++whiteEpoch;
+                NoteReset(L"the recording was discarded (list reset, never executed)");
                 status.gpuExposureValid = status.gpuDivisorValid = false;
                 status.readyPasses = status.failedPass = 0;
                 status.timingValid = false;
@@ -559,9 +580,9 @@ struct PassExecutor12::Impl
             {
                 // Only unordered work invalidates history. A submitted recording can be
                 // waited on, so a reallocated guide no longer costs the accumulation.
-                if (context && context->layer && !previous->input.ticket->CanOrderSubmission())
+                if (!previous->input.ticket->CanOrderSubmission())
                 {
-                    context->layer->first = true;
+                    RestartTemporal(L"the previous recording cannot be ordered");
                 }
                 status.ready = false;
                 status.reason = "Waiting for NR creation, rebuild or unknown-queue recording";
@@ -668,6 +689,7 @@ struct PassExecutor12::Impl
             context->format = format;
             context->encoded = encoded;
             context->tuning = settings;
+            NoteReset(L"output size, format or colour domain changed");
             // A style/strength change does not change the input exposure domain.
             // Preserve its measured white instead of alternating fallback and measurement.
             frameIndex = 0;
@@ -678,6 +700,7 @@ struct PassExecutor12::Impl
         {
             // Opt retains same-sized scratch textures when only model tuning changes.
             // Each Recording owns its feature independently until GPU retirement.
+            NoteReset(L"model tuning changed; the feature is rebuilt");
             context->layer.reset();
             context->tuning = settings;
             context->failed = false;
@@ -699,7 +722,7 @@ struct PassExecutor12::Impl
         if (reset && ctx->layer)
         {
             // Idempotent: a reset that is already pending stays the same pending reset.
-            ctx->layer->first = true;
+            RestartTemporal(L"the game asked for one");
         }
         auto recording = std::make_shared<Recording>();
         recording->context = ctx;
@@ -768,6 +791,7 @@ struct PassExecutor12::Impl
             }
             recording->createdFeature = true;
             status.error = S_OK;
+            NoteReset(L"first evaluation of a new feature");
             // Opt's main snippet path records GPU hangs when creation and evaluation
             // share a list. Submit creation first; evaluate on a later recording.
             return S_OK;
@@ -1189,12 +1213,9 @@ PassStatus PassExecutor12::Snapshot() const
 {
     return impl->status;
 }
-void PassExecutor12::InvalidateHistory()
+void PassExecutor12::InvalidateHistory(const wchar_t* why)
 {
-    if (impl->context && impl->context->layer)
-    {
-        impl->context->layer->first = true;
-    }
+    impl->RestartTemporal(why);
 }
 void PassExecutor12::RetireCompletedInputs()
 {
