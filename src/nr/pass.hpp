@@ -25,7 +25,6 @@ struct PassStatus
     unsigned ngxResult{};
     bool ready{}, edited{};
     unsigned readyPasses{}, actualPasses{}, failedPass{};
-    HRESULT modelError{};
     bool timingValid{};
     float gpuMilliseconds{}, modelMilliseconds{};
     WhiteStatus white;
@@ -56,7 +55,7 @@ class PassExecutor12
     HRESULT Record(ID3D12GraphicsCommandList*, const PassFrame&, const Exposure&, const PassSettings&,
                    bool reset, std::shared_ptr<void>& keepAlive, ID3D12Resource*& result);
     PassStatus Snapshot() const;
-    void InvalidateHistory(const wchar_t* why = L"caller requested");
+    void InvalidateHistory();
     void RetireCompletedInputs(); // drop game texture references after the real fence
   private:
     struct Impl;

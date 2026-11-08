@@ -1,8 +1,8 @@
-# 2026-11-08 重置统一入口与漂移/闪烁诊断；冷战签名开关实测通过
+# 2026-11-08 冷战签名开关实测通过；诊断日志用完即删
 
 ## 冷战：`RequireComputeSignature=1` 可用，不是「不绑定」那一类
 
-此前把它改成 `=1` 时观察到一次崩溃，无法复现。本日实测（`695c6f7`，`Level=1`）：
+此前把它改成 `=1` 时观察到一次崩溃，无法复现。本日实测（`Level=1`，临时诊断版）：
 
 ```
 NR history reset (1 so far): output size, format or colour domain changed
@@ -15,26 +15,24 @@ NR history reset (3 so far): the game asked for one
 
 那次崩溃因此不能归因于该开关，也没有在流水线里留下痕迹（日志最后一行是正常的游戏重置，不是崩溃现场）。
 
-## `Level=1` 新增 6 类诊断（`Level=0` 无输出）
+## 临时诊断已全部移除
 
-重置点此前是 8 处各写各的：有的直接置 `layer->first`，有的销毁 Context/Layer，两处走 `InvalidateHistory()` 且不带说明。反复命中时日志里看不出来，只能靠「画面好像糊了」去猜。现在统一为 `RestartTemporal(why)`（置位 + 记录）与 `NoteReset(why)`（只记录），计数器在 `Impl`，节流为**前 3 次 + 每 100 次**。
+为定位「漂移/闪烁」曾经加过 6 类 `Level=1` 诊断（重置原因、编辑状态翻转、白点来源切换、白点跳变、曝光纹理得失、白点测量失败），冷战一轮实测后确认无异常，代码已整体移除：
 
-| 日志 | 回答什么问题 |
-|---|---|
-| `NR history reset (N so far): <原因>` | 时域累积被丢弃的**频率和原因**。原因覆盖：游戏要求、输出尺寸/格式/色彩域变化、模型调优变化、新 feature 首帧、上一份录制无法定序、录制被丢弃、游戏释放自己的 feature、复用 spare executor |
-| `NR editing again / stopped editing (N so far): <reason>` | **画面在「模型答案」与「未编辑原图」之间交替**——这是闪烁最直接的成因。RAII 挂在 `Record` 出口，`refuse()` 的 8 个拒绝点、所有 `S_FALSE` 等待、模型/评估失败全部覆盖 |
-| `NR white source A -> B, value … target …` | 白点来源切换（Waiting／Held／Game／Measured／Manual／Display）。Measured 模式下在「测量」与「保持」间反复横跳就是亮度脉动 |
-| `NR white jumped X -> Y` | 相邻两帧白点比值超出 `[0.667, 1.5]`，亮度泵动的直接特征 |
-| `NR white input took/lost the game exposure texture` | 代理在「用曝光纹理算白点」与「标量回落」之间切换，两者不相等，游戏停止供应纹理时亮度跳一次（ref 记录过 GTA V 一局内掉三次）。同时监控 `Pre.Exposure` 有无 |
-| `NR white measurement failed 0x…` | GPU 回读失败会回落 `manual` 白点 |
+- 全仓重新回到**零 `LogFormat` 调用点**（只剩 `runtime.cpp` 的定义）；
+- 重置点恢复为各处直接置 `layer->first`，`InvalidateHistory()` 也回到无参签名；
+- `PassStatus::modelError` 一并删除——5 处赋值、0 处读取，是早期想区分「模型错误」与通用错误留下的死字段，实际判定一直走 `status.error`；
+- `Level` 只在 `mhwilds`／`onimusha`／`coldwar` 临时开过，已全部改回 0，测试产生的日志文件已删除。
 
-明确不处理的：`gpuExposure`／`gpuDivisor` 只进面板，不影响画面；`composed`／`differenceGain`／白点滑条不进 `SameTuning`，改了立刻生效，属于用户主动操作。
+产物回到 1,077,760 B，比加诊断前的 1,078,272 B 少 512 B，差额正是 `modelError` 那几处赋值。
 
-**已知盲区**：模型内部时域累积的缓慢漂移无法从外部观测。这套日志的价值是排除法——六类都没触发时，说明问题不在我们能控制的状态里。
+## 保留的结论
 
-## 部署
+诊断虽然删了，两条方法论值得记住：
 
-`695c6f7`，`nvngx.dll_litedx12.dll` 1,093,120 B，24 个 DX12 目标全部部署并逐项校验一致。`Level=1` 暂时只在 `mhwilds`、`onimusha`、`coldwar` 三个目录开启，其余保持 0。
+- **交替即闪烁**：画面在「模型答案」与「未编辑原图」之间切换是漂移/闪烁最直接的成因，排查时先看有没有帧被拒或等待；
+- **亮度跳变不一定是重置**：白点来源切换、白点越过死区、游戏开始/停止供应曝光纹理，都会在「每帧都正常编辑」的情况下改变亮度。尤其最后一项，ref 记录过 GTA V 一局内掉了三次。
+
 # 2026-11-05 新增 Verbose 诊断（严格只在 `Level=2` 生效）
 
 新增 6 类日志，**全部**是 `Detail::Verbose`，且在会做实际工作的地方（取 QPC、构造 `std::string`、加锁）前面另有一道 `VerboseLogging()` / `VerboseEnabled()` 提前返回。`Level=0/1` 时这些代码连函数体都不进，开销是一次 relaxed 原子读（仅在 layer 创建、context 重建、历史失效这些低频点）。

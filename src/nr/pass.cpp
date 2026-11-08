@@ -318,174 +318,12 @@ struct PassExecutor12::Impl
     UINT64 whiteEpoch{};
     bool initialized{}, attempted{};
     HRESULT initializationError = S_OK;
-    unsigned long long resets{}, edits{}, whiteJumps{}, whiteFailures{};
-    bool outcomeKnown{}, lastEdited{};
-    bool liveKnown{}, lastLive{};
-    unsigned lastLiveMode{};
-    float lastPreMul = 1;
-    unsigned long long liveChanges{}, preExposureChanges{};
-    bool whiteSourceKnown{}, whiteValueKnown{};
-    WhiteSource lastWhiteSource = WhiteSource::Waiting;
-    float lastWhiteValue = 1;
     explicit Impl(ID3D12Device* d, ModelRuntime& b)
         : device(d), backend(b)
     {
     }
-    // One name per temporal restart, so a reset loop reads as a repeating reason in the log
-    // instead of an unexplained soft picture. Level 1, throttled the way OptiScaler's own
-    // reset log is: first three then every hundredth, so a per-frame reset cannot flood it.
-    void NoteReset(const wchar_t* why)
+    std::shared_ptr<TimingResources> AcquireTiming()
     {
-        ++resets;
-        if (resets <= 3 || resets % 100 == 0)
-        {
-            LogFormat(Detail::Basic, L"NR history reset (%llu so far): %s", resets, why);
-        }
-    }
-    void RestartTemporal(const wchar_t* why)
-    {
-        if (context && context->layer)
-        {
-            context->layer->first = true;
-        }
-        NoteReset(why);
-    }
-    static const wchar_t* WhiteName(WhiteSource s)
-    {
-        switch (s)
-        {
-            case WhiteSource::Manual:
-                return L"manual";
-            case WhiteSource::Display:
-                return L"display";
-            case WhiteSource::Game:
-                return L"game exposure";
-            case WhiteSource::Measured:
-                return L"measured";
-            case WhiteSource::Waiting:
-                return L"waiting";
-            case WhiteSource::Held:
-                return L"held";
-        }
-        return L"unknown";
-    }
-    // Drift and flicker are visible as the picture alternating between the model's answer and the
-    // untouched frame, so the transition is named once with whatever reason produced it. A steady
-    // state says nothing; a repeating one names itself and stops looking like a rendering mystery.
-    void NoteOutcome()
-    {
-        if (!outcomeKnown)
-        {
-            outcomeKnown = true;
-            lastEdited = status.edited;
-            return;
-        }
-        if (status.edited == lastEdited)
-        {
-            return;
-        }
-        lastEdited = status.edited;
-        ++edits;
-        if (edits <= 6 || edits % 100 == 0)
-        {
-            LogFormat(Detail::Basic, L"NR %s (%llu so far): %hs",
-                      status.edited ? L"editing again" : L"stopped editing", edits,
-                      status.reason ? status.reason : "unknown");
-        }
-    }
-    // A white point that changes source or jumps is brightness pumping, which reads as flicker
-    // even when every frame was edited normally.
-    void NoteWhite()
-    {
-        const auto source = status.white.source;
-        if (!whiteSourceKnown)
-        {
-            whiteSourceKnown = true;
-            lastWhiteSource = source;
-        }
-        else if (source != lastWhiteSource)
-        {
-            ++whiteJumps;
-            if (whiteJumps <= 6 || whiteJumps % 100 == 0)
-            {
-                LogFormat(Detail::Basic,
-                          L"NR white source %s -> %s, value %.5g target %.5g (%llu so far)",
-                          WhiteName(lastWhiteSource), WhiteName(source),
-                          double(status.white.value), double(status.white.target), whiteJumps);
-            }
-            lastWhiteSource = source;
-        }
-        const bool valid = status.white.valid && std::isfinite(status.white.value) &&
-                           status.white.value > 0;
-        if (!whiteValueKnown)
-        {
-            whiteValueKnown = valid;
-            lastWhiteValue = status.white.value;
-            return;
-        }
-        if (!valid || !lastWhiteValue)
-        {
-            return;
-        }
-        const auto ratio = status.white.value / lastWhiteValue;
-        if (ratio > 1.5f || ratio < 0.6667f)
-        {
-            ++whiteJumps;
-            if (whiteJumps <= 6 || whiteJumps % 100 == 0)
-            {
-                LogFormat(Detail::Basic,
-                          L"NR white jumped %.5g -> %.5g (%llu so far), source %s",
-                          double(lastWhiteValue), double(status.white.value), whiteJumps,
-                          WhiteName(source));
-            }
-        }
-        lastWhiteValue = status.white.value;
-    }
-    // The proxy computes white either from the game's exposure texture or from the scalar
-    // fallback, and the two disagree. A game that starts or stops supplying the texture -- GTA V
-    // dropped it three times in one session -- therefore changes brightness with no other
-    // symptom, and so does a Pre.Exposure that comes and goes.
-    void NoteLive(bool live, unsigned liveMode, float preMul)
-    {
-        if (!liveKnown)
-        {
-            liveKnown = true;
-            lastLive = live;
-            lastLiveMode = liveMode;
-            lastPreMul = preMul;
-            return;
-        }
-        if (live != lastLive)
-        {
-            ++liveChanges;
-            if (liveChanges <= 6 || liveChanges % 100 == 0)
-            {
-                LogFormat(Detail::Basic, L"NR white input %s the game exposure texture (%llu so far)",
-                          live ? L"took" : L"lost", liveChanges);
-            }
-            lastLive = live;
-        }
-        if (liveMode && preMul != lastPreMul)
-        {
-            ++preExposureChanges;
-            if (preExposureChanges <= 6 || preExposureChanges % 100 == 0)
-            {
-                LogFormat(Detail::Basic, L"NR pre-exposure %.5g -> %.5g (%llu so far)",
-                          double(lastPreMul), double(preMul), preExposureChanges);
-            }
-        }
-        lastLiveMode = liveMode;
-        lastPreMul = preMul;
-    }
-    void NoteWhiteFailure(HRESULT hr)    {
-        ++whiteFailures;
-        if (whiteFailures <= 3 || whiteFailures % 100 == 0)
-        {
-            LogFormat(Detail::Basic, L"NR white measurement failed 0x%08X (%llu so far)",
-                      unsigned(hr), whiteFailures);
-        }
-    }
-    std::shared_ptr<TimingResources> AcquireTiming()    {
         // Recordings retain these through submission and fence retirement. Sole
         // pool ownership also excludes any caller still retaining a completed frame.
         for (auto& resources : timingPool)
@@ -531,15 +369,6 @@ struct PassExecutor12::Impl
             timingPool.clear();
         }
         ThrowIfFailed(device->GetDeviceRemovedReason());
-        // Every path out of this function is an outcome the picture can show.
-        struct OutcomeGuard
-        {
-            Impl& owner;
-            ~OutcomeGuard()
-            {
-                owner.NoteOutcome();
-            }
-        } outcomeGuard{*this};
         // A rejected frame never reached the model, so its temporal history is still valid:
         // nothing here may ask for a Reset on the next successful frame.
         auto refuse = [&](HRESULT hr, const char* why)
@@ -715,11 +544,9 @@ struct PassExecutor12::Impl
                 context.reset();
                 white.Reset();
                 ++whiteEpoch;
-                NoteReset(L"the recording was discarded (list reset, never executed)");
                 status.gpuExposureValid = status.gpuDivisorValid = false;
                 status.readyPasses = status.failedPass = 0;
                 status.timingValid = false;
-                status.modelError = S_OK;
                 return refuse(E_ABORT, "NR recording discarded; history rebuild on next frame");
             }
             // A tuning change rebuilds the feature anyway, and Layer::~Layer parks the old
@@ -731,9 +558,9 @@ struct PassExecutor12::Impl
             {
                 // Only unordered work invalidates history. A submitted recording can be
                 // waited on, so a reallocated guide no longer costs the accumulation.
-                if (!previous->input.ticket->CanOrderSubmission())
+                if (context && context->layer && !previous->input.ticket->CanOrderSubmission())
                 {
-                    RestartTemporal(L"the previous recording cannot be ordered");
+                    context->layer->first = true;
                 }
                 status.ready = false;
                 status.reason = "Waiting for NR creation, rebuild or unknown-queue recording";
@@ -767,10 +594,6 @@ struct PassExecutor12::Impl
             {
                 status.whiteMeasurementError =
                     completed->meter->Consume(white, &status.gpuExposure);
-                if (FAILED(status.whiteMeasurementError))
-                {
-                    NoteWhiteFailure(status.whiteMeasurementError);
-                }
                 if (SUCCEEDED(status.whiteMeasurementError))
                 {
                     status.gpuExposureValid =
@@ -824,7 +647,6 @@ struct PassExecutor12::Impl
         }
         previous.reset();
         status.white = white.Resolve(settings.white, exposure, dt);
-        NoteWhite();
         if (!exposure.sceneLinear)
         {
             status.white.value = status.white.target = 1; // SDR bypass actually normalizes by one
@@ -845,23 +667,19 @@ struct PassExecutor12::Impl
             context->format = format;
             context->encoded = encoded;
             context->tuning = settings;
-            NoteReset(L"output size, format or colour domain changed");
             // A style/strength change does not change the input exposure domain.
             // Preserve its measured white instead of alternating fallback and measurement.
             frameIndex = 0;
-            status.modelError = S_OK;
             status.timingValid = false;
         }
         if (!SameTuning(context->tuning, settings))
         {
             // Opt retains same-sized scratch textures when only model tuning changes.
             // Each Recording owns its feature independently until GPU retirement.
-            NoteReset(L"model tuning changed; the feature is rebuilt");
             context->layer.reset();
             context->tuning = settings;
             context->failed = false;
             frameIndex = 0;
-            status.modelError = S_OK;
             status.timingValid = false;
         }
         auto ctx = context;
@@ -878,7 +696,7 @@ struct PassExecutor12::Impl
         if (reset && ctx->layer)
         {
             // Idempotent: a reset that is already pending stays the same pending reset.
-            RestartTemporal(L"the game asked for one");
+            ctx->layer->first = true;
         }
         auto recording = std::make_shared<Recording>();
         recording->context = ctx;
@@ -938,7 +756,6 @@ struct PassExecutor12::Impl
             if (rc != 1 || !layer->feature)
             {
                 layer->failed = true;
-                status.modelError = E_FAIL;
                 status.failedPass = 1;
                 status.reason = "NR feature creation failed; original frame preserved";
                 ctx->failed = true;
@@ -947,7 +764,6 @@ struct PassExecutor12::Impl
             }
             recording->createdFeature = true;
             status.error = S_OK;
-            NoteReset(L"first evaluation of a new feature");
             // Opt's main snippet path records GPU hangs when creation and evaluation
             // share a list. Submit creation first; evaluate on a later recording.
             return S_OK;
@@ -1108,7 +924,6 @@ struct PassExecutor12::Impl
         recording->whiteExponent = c.exponent;
         recording->whiteTrim = c.trim;
         recording->fallbackWhite = c.white;
-        NoteLive(live, c.live, c.preMul);
         auto run = [&](unsigned offset, const Constants& constants)
         {
             auto* heap = recording->heap.Get();
@@ -1257,7 +1072,6 @@ struct PassExecutor12::Impl
             if (rc != 1)
             {
                 layer->failed = true;
-                status.modelError = E_FAIL;
                 status.failedPass = 1;
                 status.readyPasses = 0;
             }
@@ -1370,9 +1184,12 @@ PassStatus PassExecutor12::Snapshot() const
 {
     return impl->status;
 }
-void PassExecutor12::InvalidateHistory(const wchar_t* why)
+void PassExecutor12::InvalidateHistory()
 {
-    impl->RestartTemporal(why);
+    if (impl->context && impl->context->layer)
+    {
+        impl->context->layer->first = true;
+    }
 }
 void PassExecutor12::RetireCompletedInputs()
 {

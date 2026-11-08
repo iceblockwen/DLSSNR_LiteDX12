@@ -293,7 +293,7 @@ void ReleaseModelStream(void* stream)
         // executor and only drop its temporal history, so the next stream reuses the feature.
         if (l.spare12.size() < 2)
         {
-            it->second->InvalidateHistory(L"the game released its feature; the executor is parked");
+            it->second->InvalidateHistory();
             l.spare12.push_back(std::move(it->second));
         }
         it = l.model12.erase(it);
@@ -670,7 +670,7 @@ HRESULT Capture12(ID3D12GraphicsCommandList* commands, const FrameInput& origina
                     {
                         pass = std::move(l.spare12.back());
                         l.spare12.pop_back();
-                        pass->InvalidateHistory(L"a parked executor is reused");
+                        pass->InvalidateHistory();
                     }
                     else
                     {
