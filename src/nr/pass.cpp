@@ -318,7 +318,15 @@ struct PassExecutor12::Impl
     UINT64 whiteEpoch{};
     bool initialized{}, attempted{};
     HRESULT initializationError = S_OK;
-    unsigned long long resets{};
+    unsigned long long resets{}, edits{}, whiteJumps{}, whiteFailures{};
+    bool outcomeKnown{}, lastEdited{};
+    bool liveKnown{}, lastLive{};
+    unsigned lastLiveMode{};
+    float lastPreMul = 1;
+    unsigned long long liveChanges{}, preExposureChanges{};
+    bool whiteSourceKnown{}, whiteValueKnown{};
+    WhiteSource lastWhiteSource = WhiteSource::Waiting;
+    float lastWhiteValue = 1;
     explicit Impl(ID3D12Device* d, ModelRuntime& b)
         : device(d), backend(b)
     {
@@ -342,8 +350,142 @@ struct PassExecutor12::Impl
         }
         NoteReset(why);
     }
-    std::shared_ptr<TimingResources> AcquireTiming()
+    static const wchar_t* WhiteName(WhiteSource s)
     {
+        switch (s)
+        {
+            case WhiteSource::Manual:
+                return L"manual";
+            case WhiteSource::Display:
+                return L"display";
+            case WhiteSource::Game:
+                return L"game exposure";
+            case WhiteSource::Measured:
+                return L"measured";
+            case WhiteSource::Waiting:
+                return L"waiting";
+            case WhiteSource::Held:
+                return L"held";
+        }
+        return L"unknown";
+    }
+    // Drift and flicker are visible as the picture alternating between the model's answer and the
+    // untouched frame, so the transition is named once with whatever reason produced it. A steady
+    // state says nothing; a repeating one names itself and stops looking like a rendering mystery.
+    void NoteOutcome()
+    {
+        if (!outcomeKnown)
+        {
+            outcomeKnown = true;
+            lastEdited = status.edited;
+            return;
+        }
+        if (status.edited == lastEdited)
+        {
+            return;
+        }
+        lastEdited = status.edited;
+        ++edits;
+        if (edits <= 6 || edits % 100 == 0)
+        {
+            LogFormat(Detail::Basic, L"NR %s (%llu so far): %hs",
+                      status.edited ? L"editing again" : L"stopped editing", edits,
+                      status.reason ? status.reason : "unknown");
+        }
+    }
+    // A white point that changes source or jumps is brightness pumping, which reads as flicker
+    // even when every frame was edited normally.
+    void NoteWhite()
+    {
+        const auto source = status.white.source;
+        if (!whiteSourceKnown)
+        {
+            whiteSourceKnown = true;
+            lastWhiteSource = source;
+        }
+        else if (source != lastWhiteSource)
+        {
+            ++whiteJumps;
+            if (whiteJumps <= 6 || whiteJumps % 100 == 0)
+            {
+                LogFormat(Detail::Basic,
+                          L"NR white source %s -> %s, value %.5g target %.5g (%llu so far)",
+                          WhiteName(lastWhiteSource), WhiteName(source),
+                          double(status.white.value), double(status.white.target), whiteJumps);
+            }
+            lastWhiteSource = source;
+        }
+        const bool valid = status.white.valid && std::isfinite(status.white.value) &&
+                           status.white.value > 0;
+        if (!whiteValueKnown)
+        {
+            whiteValueKnown = valid;
+            lastWhiteValue = status.white.value;
+            return;
+        }
+        if (!valid || !lastWhiteValue)
+        {
+            return;
+        }
+        const auto ratio = status.white.value / lastWhiteValue;
+        if (ratio > 1.5f || ratio < 0.6667f)
+        {
+            ++whiteJumps;
+            if (whiteJumps <= 6 || whiteJumps % 100 == 0)
+            {
+                LogFormat(Detail::Basic,
+                          L"NR white jumped %.5g -> %.5g (%llu so far), source %s",
+                          double(lastWhiteValue), double(status.white.value), whiteJumps,
+                          WhiteName(source));
+            }
+        }
+        lastWhiteValue = status.white.value;
+    }
+    // The proxy computes white either from the game's exposure texture or from the scalar
+    // fallback, and the two disagree. A game that starts or stops supplying the texture -- GTA V
+    // dropped it three times in one session -- therefore changes brightness with no other
+    // symptom, and so does a Pre.Exposure that comes and goes.
+    void NoteLive(bool live, unsigned liveMode, float preMul)
+    {
+        if (!liveKnown)
+        {
+            liveKnown = true;
+            lastLive = live;
+            lastLiveMode = liveMode;
+            lastPreMul = preMul;
+            return;
+        }
+        if (live != lastLive)
+        {
+            ++liveChanges;
+            if (liveChanges <= 6 || liveChanges % 100 == 0)
+            {
+                LogFormat(Detail::Basic, L"NR white input %s the game exposure texture (%llu so far)",
+                          live ? L"took" : L"lost", liveChanges);
+            }
+            lastLive = live;
+        }
+        if (liveMode && preMul != lastPreMul)
+        {
+            ++preExposureChanges;
+            if (preExposureChanges <= 6 || preExposureChanges % 100 == 0)
+            {
+                LogFormat(Detail::Basic, L"NR pre-exposure %.5g -> %.5g (%llu so far)",
+                          double(lastPreMul), double(preMul), preExposureChanges);
+            }
+        }
+        lastLiveMode = liveMode;
+        lastPreMul = preMul;
+    }
+    void NoteWhiteFailure(HRESULT hr)    {
+        ++whiteFailures;
+        if (whiteFailures <= 3 || whiteFailures % 100 == 0)
+        {
+            LogFormat(Detail::Basic, L"NR white measurement failed 0x%08X (%llu so far)",
+                      unsigned(hr), whiteFailures);
+        }
+    }
+    std::shared_ptr<TimingResources> AcquireTiming()    {
         // Recordings retain these through submission and fence retirement. Sole
         // pool ownership also excludes any caller still retaining a completed frame.
         for (auto& resources : timingPool)
@@ -389,6 +531,15 @@ struct PassExecutor12::Impl
             timingPool.clear();
         }
         ThrowIfFailed(device->GetDeviceRemovedReason());
+        // Every path out of this function is an outcome the picture can show.
+        struct OutcomeGuard
+        {
+            Impl& owner;
+            ~OutcomeGuard()
+            {
+                owner.NoteOutcome();
+            }
+        } outcomeGuard{*this};
         // A rejected frame never reached the model, so its temporal history is still valid:
         // nothing here may ask for a Reset on the next successful frame.
         auto refuse = [&](HRESULT hr, const char* why)
@@ -616,6 +767,10 @@ struct PassExecutor12::Impl
             {
                 status.whiteMeasurementError =
                     completed->meter->Consume(white, &status.gpuExposure);
+                if (FAILED(status.whiteMeasurementError))
+                {
+                    NoteWhiteFailure(status.whiteMeasurementError);
+                }
                 if (SUCCEEDED(status.whiteMeasurementError))
                 {
                     status.gpuExposureValid =
@@ -669,6 +824,7 @@ struct PassExecutor12::Impl
         }
         previous.reset();
         status.white = white.Resolve(settings.white, exposure, dt);
+        NoteWhite();
         if (!exposure.sceneLinear)
         {
             status.white.value = status.white.target = 1; // SDR bypass actually normalizes by one
@@ -952,6 +1108,7 @@ struct PassExecutor12::Impl
         recording->whiteExponent = c.exponent;
         recording->whiteTrim = c.trim;
         recording->fallbackWhite = c.white;
+        NoteLive(live, c.live, c.preMul);
         auto run = [&](unsigned offset, const Constants& constants)
         {
             auto* heap = recording->heap.Get();
