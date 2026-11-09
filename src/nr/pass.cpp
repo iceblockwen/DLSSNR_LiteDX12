@@ -890,7 +890,11 @@ struct PassExecutor12::Impl
         uav(5, nullptr);
         // Lite's captured/shared input is already the owned, unedited image.
         // Reuse it for resolve instead of Lite's second half-float keep copy.
-        srv(6, ctx->proxy.Get());
+        // t0 is the image the model was given. Without an encode pass that is the game's own
+        // colour, so it has to be bound directly: compose compares the answer against what the
+        // model saw, and a null descriptor reads as black, which drives proxyLuma to zero and
+        // doubles the result's luma in the final normalisation.
+        srv(6, ctx->encoded ? ctx->proxy.Get() : result);
         srv(8, result);
         srv(9, recording->exposure.Get());
         uav(10, resolveTarget);
