@@ -1,6 +1,8 @@
 #include "pass.hpp"
 #include "gpu_util.hpp"
-#include "lite_color_shader.hpp"
+#include "lite_encode_shader.hpp"
+#include "lite_guide_shader.hpp"
+#include "lite_resolve_shader.hpp"
 #include "model_runtime.hpp"
 #include "../graphics.hpp"
 #include <mutex>
@@ -205,7 +207,7 @@ struct Recording
     ResourceMetadata exposureMetadata{};
     ComPtr<ID3D12Resource> modelGuides[2];
     ComPtr<ID3D12RootSignature> root;
-    ComPtr<ID3D12PipelineState> pipeline;
+    ComPtr<ID3D12PipelineState> encodePso, resolvePso, guidePso;
     ComPtr<ID3D12DescriptorHeap> heap;
     std::shared_ptr<WhiteReadback> meter;
     std::shared_ptr<TimingResources> timing;
@@ -308,7 +310,7 @@ struct PassExecutor12::Impl
     ComPtr<ID3D12Device> device;
     ModelRuntime& backend;
     ComPtr<ID3D12RootSignature> root;
-    ComPtr<ID3D12PipelineState> pipeline;
+    ComPtr<ID3D12PipelineState> encodePso, resolvePso, guidePso;
     std::unique_ptr<WhiteMeter12> meter;
     std::vector<HeapSlot> heaps;
     WhitePoint white;
@@ -346,16 +348,20 @@ struct PassExecutor12::Impl
     }
     void Shaders()
     {
-        if (root && pipeline)
+        if (root && resolvePso)
         {
             return;
         }
         D3D12_DESCRIPTOR_RANGE ranges[2]{{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 4, 0, 0, 0},
                                          {D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 2, 0, 0, 4}};
         // Bytecode is built by fxc at build time (CMakeLists): the render thread
-        // never parses shader source.
-        ComputePipeline(device.Get(), ranges, 2, 12, liteColorShader, liteColorShaderSize,
-                        root.ReleaseAndGetAddressOf(), pipeline.ReleaseAndGetAddressOf());
+        // never parses shader source. One root signature, three pipelines.
+        ComputePipeline(device.Get(), ranges, 2, 12, liteEncodeShader, liteEncodeShaderSize,
+                        root.GetAddressOf(), encodePso.GetAddressOf());
+        ComputePipeline(device.Get(), ranges, 2, 12, liteResolveShader, liteResolveShaderSize,
+                        root.GetAddressOf(), resolvePso.GetAddressOf());
+        ComputePipeline(device.Get(), ranges, 2, 12, liteGuideShader, liteGuideShaderSize,
+                        root.GetAddressOf(), guidePso.GetAddressOf());
     }
     HRESULT Record(ID3D12GraphicsCommandList* list, const PassFrame& frame, const Exposure& exposure,
                    const PassSettings& settings, bool reset,
@@ -772,7 +778,9 @@ struct PassExecutor12::Impl
             return S_OK;
         }
         recording->root = root;
-        recording->pipeline = pipeline;
+        recording->encodePso = encodePso;
+        recording->resolvePso = resolvePso;
+        recording->guidePso = guidePso;
         if (!ctx->answer)
         {
             if (ctx->encoded)
@@ -889,13 +897,14 @@ struct PassExecutor12::Impl
         uav(11, nullptr);
         struct Constants
         {
-            unsigned mode, w, h, display;
+            unsigned w, h, display;
             float white, preMul;
             unsigned live;
             float gain;
             unsigned composed;
             float exponent, trim;
             unsigned reserved;
+            float sharpness;
         } c{};
         c.w = ctx->w;
         c.h = ctx->h;
@@ -904,6 +913,7 @@ struct PassExecutor12::Impl
         c.preMul = 1;
         c.gain = settings.differenceGain;
         c.composed = settings.composed ? 1u : 0u;
+        c.sharpness = settings.sharpness;
         c.exponent = settings.white.exponent;
         c.trim = settings.white.trim;
         const bool live =
@@ -927,12 +937,12 @@ struct PassExecutor12::Impl
         recording->whiteExponent = c.exponent;
         recording->whiteTrim = c.trim;
         recording->fallbackWhite = c.white;
-        auto run = [&](unsigned offset, const Constants& constants)
+        auto run = [&](unsigned offset, const Constants& constants, ID3D12PipelineState* state)
         {
             auto* heap = recording->heap.Get();
             list->SetDescriptorHeaps(1, &heap);
             list->SetComputeRootSignature(root.Get());
-            list->SetPipelineState(pipeline.Get());
+            list->SetPipelineState(state);
             auto gpu = heap->GetGPUDescriptorHandleForHeapStart();
             gpu.ptr += UINT64(offset) * stride;
             list->SetComputeRootDescriptorTable(0, gpu);
@@ -978,10 +988,9 @@ struct PassExecutor12::Impl
             uav(table + 5, nullptr);
             // Guide passes differ only in their constants and descriptor table.
             auto guideConstants = c;
-            guideConstants.mode = 2;
             guideConstants.w = unsigned(d.Width);
             guideConstants.h = d.Height;
-            run(table, guideConstants);
+            run(table, guideConstants, guidePso.Get());
             pending.Add(twin.Get(), UAV, SRV);
             guides[n] = twin.Get();
             recording->modelGuides[n] = twin;
@@ -1022,7 +1031,7 @@ struct PassExecutor12::Impl
         }
         if (ctx->encoded)
         {
-            run(0, c);
+            run(0, c, encodePso.Get());
             // One barrier call covers the guide conversions finishing and the proxy
             // becoming readable for the model.
             pending.Add(ctx->proxy.Get(), UAV, SRV);
@@ -1102,8 +1111,7 @@ struct PassExecutor12::Impl
                 resolve.Add(ctx->output.Get(), SRV, UAV);
             }
             resolve.Flush();
-            c.mode = 1;
-            run(6, c);
+            run(6, c, resolvePso.Get());
             if (!frame.resolveTarget)
             {
                 // Private output is read by the color copy-back; the game UAV used by

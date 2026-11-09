@@ -85,7 +85,7 @@ src/nr/         观察 + 管线
 | `LITE_TEST_HOOKS`(34 处) / 截图 / 测试导出 | — | ✅ 已删（宏从未被定义，全是死码） |
 | 幂等快照的 `size`/`version`、`ArchitectureStatus` 及其 hook 标志 | — | ✅ 已删（只被测试导出读，写完无人读） |
 | `namespace lite` → `litedx12` | 全工程 | ✅ 已改（53 个文件，逐文件回读校验；CMake 目标同为 `litedx12_runtime`/`litedx12_frames`） |
-| 三个 compute shader（`lite_color` / `lite_preview` / `lite_meter`） | `src/nr/shaders/*.hlsl` + fxc 预编译成 CSO 内嵌 | ✅ 已改：configure 时 fxc `/T cs_5_0 /E Main /O3` → 字节数组头文件；`D3DCompile` 与 `d3dcompiler` 依赖彻底消失（渲染线程不再解析 shader 源码） |
+| 五个 compute shader（`lite_encode` / `lite_resolve` / `lite_guide` / `lite_preview` / `lite_meter`） | `src/nr/shaders/*.hlsl` + fxc 预编译成 CSO 内嵌 | ✅ 已改：configure 时 fxc `/T cs_5_0 /E Main /O3` → 字节数组头文件；`D3DCompile` 与 `d3dcompiler` 依赖彻底消失（渲染线程不再解析 shader 源码）。原 `lite_color` 的 `mode` 三分支已拆成一 pass 一 PSO，共用一份根签名与公共数学头 `lite_common.hlsli` |
 | 描述符 heap | 48 个轮转（Opti） | ❌ 不做：我们是 **fence 确认完成后**才复用上一个 recording 的 heap，在飞数量就是 heap 数量；换成 48 轮转等于用“猜一个在飞窗口”替换掉一条精确保证 |
 
 ## 与 OptiScaler 的关键差异（为什么我们不照抄）

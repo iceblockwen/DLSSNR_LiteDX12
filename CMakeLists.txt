@@ -59,9 +59,13 @@ ${bytes}
 inline constexpr unsigned int ${symbol}Size = sizeof(${symbol});
 ")
 endfunction()
-litedx12_shader(lite_color liteColorShader)
+litedx12_shader(lite_encode liteEncodeShader)
+litedx12_shader(lite_resolve liteResolveShader)
+litedx12_shader(lite_guide liteGuideShader)
 litedx12_shader(lite_preview litePreviewShader)
 litedx12_shader(lite_meter liteMeterShader)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+             "${CMAKE_CURRENT_SOURCE_DIR}/src/nr/shaders/lite_common.hlsli")
 # The NR pipeline: the pass, its preview compute shader, white point and the format helpers.
 add_library(litedx12_frames STATIC src/nr/gpu_util.cpp src/nr/preview.cpp src/nr/pass.cpp src/nr/white_point.cpp)
 target_include_directories(litedx12_frames PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
