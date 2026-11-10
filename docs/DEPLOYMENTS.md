@@ -1,3 +1,42 @@
+# 2026-11-10 移除锐化；SDR 8-bit 的 proxy 绑定修正
+
+## 移除 `Sharpness`（unsharp mask）
+
+实测看不出收益，成本是每个像素 4 次邻域采样外加 4 次 `SrgbToLinear`。整条链路删除：
+
+- `lite_resolve.hlsl`：锐化分支与 cbuffer 里的 `sharpness`
+- `PassSettings::sharpness`、INI 的 `Sharpness`、面板滑块与 tooltip
+- 常量块 12 word → 11 word，共享根签名与 `SetComputeRoot32BitConstants` 同步；
+  `encode` 本来就声明 11 个字段、`guide` 只有 2 个，11 覆盖最大值。`preview` 是独立根签名，保持 12。
+
+两端产物各减 3,072 B，DX12 1,083,392 → 1,080,320，DX11 1,200,640 → 1,197,568。
+
+## SDR 8-bit 的 resolve 输入此前绑的是空描述符
+
+`lite_resolve` 的 `t0` 是「模型看到的输入图」，`Compose` 拿它当亮度基准。HDR 与 SDR >8bit
+路径下 `t0` 绑 `ctx->proxy`（encode 的产物）；SDR 8-bit 走零拷贝直读，`proxy` 根本不分配，
+于是 `t0` 是空描述符，读到全零，`proxyLuma = 0`，`scale` 变成 `1 + originalLuma/modelLuma`，
+亮度约为原图两倍。
+
+改为 `ctx->encoded ? ctx->proxy.Get() : result`。DX11 侧一直写法正确（`bg3` 就是 SDR 8-bit），
+只有 DX12 缺这个守卫；24 个 DX12 目标都不落在这个组合里，所以一直没暴露。
+
+## mhwilds 关 DLSS 卡死：未复现，诊断已撤
+
+一次报告「关闭 DLSS 超分后画面定住、进程无响应」。插桩（`NoteStage` + watchdog 线程）跑了两轮，
+第二轮不再复现，代码已整体回滚，仓库仍停在零 `LogFormat` 调用点。
+
+第一轮日志留下的结论：
+
+- `ResizeBuffers` 路径无关（关 DLSS 前后没有任何 resize）
+- `ReleaseFeature` 全链路干净（三次日志 + 两次 `ReleaseModelStream` 都有进有出）
+- 卡点落在 present 入口之后、下一条日志之前，即 `GraphicsMutex` / `Panel::Draw` /
+  `ForwardPresent` 三者之一
+- **异常观察**：所有 NGX 调用都出现两次，同一 handle 走 `entry=5` 和 `entry=0`，
+  说明 mhwilds 目录里多份 nvngx 让两个模块都挂上了 thunk。本次未造成问题，但状态不正常。
+
+若再次出现，`NoteStage` + watchdog 的思路可直接重建：每次跨阶段打一次 relaxed 原子写，
+watchdog 每 4 秒把「停在哪一段」写进日志。
 # 2026-11-08 冷战签名开关实测通过；诊断日志用完即删
 
 ## 冷战：`RequireComputeSignature=1` 可用，不是「不绑定」那一类
