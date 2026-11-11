@@ -155,7 +155,9 @@ struct Layer
     ModelRuntime* backend{};
     void* feature{};
     std::shared_ptr<GpuTicket> last;
-    bool first = true, failed{};
+    // Pending history reset: passed as DLSSNR.Reset on the next evaluation and cleared
+    // only after that evaluation succeeds, so a failure keeps asking for one.
+    bool historyReset = true, failed{};
     ~Layer()
     {
         // Never release under work that may still be in flight, and never drop the handle
@@ -326,6 +328,14 @@ struct PassExecutor12::Impl
     explicit Impl(ID3D12Device* d, ModelRuntime& b)
         : device(d), backend(b)
     {
+    }
+    // Restart temporal state without freeing the feature or its working textures.
+    void RestartHistory()
+    {
+        if (context && context->layer)
+        {
+            context->layer->historyReset = true;
+        }
     }
     std::shared_ptr<TimingResources> AcquireTiming()
     {
@@ -567,9 +577,9 @@ struct PassExecutor12::Impl
             {
                 // Only unordered work invalidates history. A submitted recording can be
                 // waited on, so a reallocated guide no longer costs the accumulation.
-                if (context && context->layer && !previous->input.ticket->CanOrderSubmission())
+                if (!previous->input.ticket->CanOrderSubmission())
                 {
-                    context->layer->first = true;
+                    RestartHistory();
                 }
                 status.ready = false;
                 status.reason = "Waiting for NR creation, rebuild or unknown-queue recording";
@@ -705,7 +715,7 @@ struct PassExecutor12::Impl
         if (reset && ctx->layer)
         {
             // Idempotent: a reset that is already pending stays the same pending reset.
-            ctx->layer->first = true;
+            ctx->layer->historyReset = true;
         }
         auto recording = std::make_shared<Recording>();
         recording->context = ctx;
@@ -756,7 +766,7 @@ struct PassExecutor12::Impl
             ctx->layer = layer;
             recording->layer = layer;
             previous = recording;
-            layer->first = true;
+            layer->historyReset = true;
             // The only place a feature is created.
             const auto rc = backend.Create(list, &layer->feature);
             status.ngxResult = rc;
@@ -1053,7 +1063,7 @@ struct PassExecutor12::Impl
                 ModelRuntime::Batch params(backend);
                 params.SetResource("DLSSNR.Color", input);
                 params.SetResource("DLSSNR.Output", answer);
-                params.SetUnsigned("DLSSNR.Reset", layer->first ? 1u : 0u);
+                params.SetUnsigned("DLSSNR.Reset", layer->historyReset ? 1u : 0u);
                 params.SetResource("DLSSNR.Depth", guides[0]);
                 params.SetResource("DLSSNR.MVec", guides[1]);
                 params.SetUnsigned("DLSSNR.DepthInverted", frame.guides.depthInverted ? 1u : 0u);
@@ -1091,7 +1101,7 @@ struct PassExecutor12::Impl
             }
             else
             {
-                layer->first = false;
+                layer->historyReset = false;
                 status.actualPasses = 1;
                 recording->evaluated = true;
                 evaluatedOk = true;
@@ -1199,10 +1209,7 @@ PassStatus PassExecutor12::Snapshot() const
 }
 void PassExecutor12::InvalidateHistory()
 {
-    if (impl->context && impl->context->layer)
-    {
-        impl->context->layer->first = true;
-    }
+    impl->RestartHistory();
 }
 void PassExecutor12::RetireCompletedInputs()
 {
